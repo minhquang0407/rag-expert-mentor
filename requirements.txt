@@ -1,0 +1,11 @@
+streamlit
+chromadb
+networkx
+langchain
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-text-splitters
+langgraph
+langgraph-checkpoint-sqlite
+python-dotenv
