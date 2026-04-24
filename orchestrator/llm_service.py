@@ -1,13 +1,15 @@
 import json
+import os
 from typing import List, Dict
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
-
+from dotenv import load_dotenv
+load_dotenv()
 class GeminiLLMService:
     def __init__(self, model_name: str = "gemini-2.5-flash", temperature: float = 0.1):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             temperature=temperature,
+            google_api_key=os.environ.get("LLM_API_KEY"),
             max_output_tokens=8192 # Tăng limit token vì 1 Section xuất ra mảng JSON sẽ khá dài
         )
 
@@ -68,3 +70,57 @@ class GeminiLLMService:
                 time.sleep(2)
 
         return []
+
+    def generate_hypothetical_questions(self, section_text: str, num_questions: int = 5) -> List[str]:
+        prompt = f"""
+        Context: You are a Professor formulating examination and FAQ questions.
+        Task: Read the provided TEXTBOOK SECTION and generate EXACTLY {num_questions} questions that this section perfectly answers.
+
+        Constraints:
+        1. Return ONLY a valid JSON array of strings: ["question 1", "question 2", ...].
+        2. The questions must cover the core definitions, theorems, and practical applications in the text.
+        3. Do NOT include answers. No markdown outside the JSON array.
+
+        [TEXTBOOK SECTION]:
+        {section_text}
+        """
+        try:
+            response = self.llm.invoke(prompt)
+            raw_content = response.content.strip()
+            start_idx = raw_content.find('[')
+            end_idx = raw_content.rfind(']')
+            if start_idx != -1 and end_idx != -1:
+                return json.loads(raw_content[start_idx:end_idx + 1])
+        except Exception as e:
+            print(f"[!] Lỗi sinh câu hỏi: {e}")
+        return []
+
+    def rerank_candidate_questions(self, user_query: str, candidates: List[Dict[str, str]]) -> str:
+        candidates_str = json.dumps(candidates, ensure_ascii=False, indent=2)
+
+        prompt = f"""
+        Task: Reranking Semantic Similarity.
+        User Query: "{user_query}"
+
+        Candidate Questions:
+        {candidates_str}
+
+        Identify WHICH candidate question has the exact same semantic intent as the User Query.
+        Constraint: 
+        1. Return ONLY a valid JSON object: {{"best_parent_id": "the_parent_id_here"}}.
+        2. If NO candidate is remotely similar to the user query, return {{"best_parent_id": ""}}.
+        3. Do not explain.
+        """
+        try:
+            response = self.llm.invoke(prompt)
+            raw_content = response.content.strip()
+            start_idx = raw_content.find('{')
+            end_idx = raw_content.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                result = json.loads(raw_content[start_idx:end_idx + 1])
+                return result.get("best_parent_id", "")
+        except Exception as e:
+            print(f"[!] Lỗi Rerank: {e}")
+            # Fallback: Trả về ứng viên đầu tiên nếu LLM lỗi Parse
+            if candidates: return candidates[0].get("parent_id", "")
+        return ""

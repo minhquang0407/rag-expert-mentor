@@ -27,7 +27,7 @@ class LessonOrchestrator:
 
         # 1. Khai báo các Node
         workflow.add_node("lesson_retrieve", LessonRetrievalNode(self.db, self.dag))
-        workflow.add_node("qa_retrieve", QARetrievalNode(self.db, self.dag))
+        workflow.add_node("qa_retrieve", QARetrievalNode(self.db, self.dag, self.llm))
         workflow.add_node("teacher", TeacherNode(self.llm))
 
         # 2. Khai báo CẠNH ĐIỀU KIỆN (Ngã ba định tuyến từ START)

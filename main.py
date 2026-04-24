@@ -23,14 +23,14 @@ from core.data_ingestion import run_ingestion_pipeline
 
 load_dotenv()
 
-
+from config.settings import LLM_MODEL_NAME
 # ==========================================
 # 1. KHỞI TẠO HỆ THỐNG
 # ==========================================
 @st.cache_resource
 def init_system():
     db = QdrantVectorStore(collection_name="math_curriculum")
-    llm = GeminiLLMService(temperature=0.3)
+    llm = GeminiLLMService(model_name=LLM_MODEL_NAME,temperature=0.3)
     dag = SemanticDAG(llm_service=llm, vector_store=db)
 
     conn = sqlite3.connect("memory_checkpoint.sqlite", check_same_thread=False)

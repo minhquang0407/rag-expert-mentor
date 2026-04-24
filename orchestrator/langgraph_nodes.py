@@ -49,10 +49,10 @@ class LessonRetrievalNode:
 class QARetrievalNode:
     """Node chuyên trách việc tìm kiếm câu trả lời bằng Hybrid Search (Micro-Retrieval)."""
 
-    def __init__(self, db: QdrantVectorStore, dag: SemanticDAG):
+    def __init__(self, db: QdrantVectorStore, dag: SemanticDAG, llm_service):
         self.db = db
         self.dag = dag
-
+        self.llm_service = llm_service
     def __call__(self, state: LessonState) -> Dict[str, Any]:
         print("\n[Node: QA_Retrieve] Kích hoạt Hybrid Search (BM25 + Dense Vector)...")
 
@@ -61,13 +61,18 @@ class QARetrievalNode:
         target_section = state.get("target_section", "")
 
         # GỌI API HYBRID SEARCH CỦA QDRANT (Lấy Top 3 kết quả)
-        results = self.db.hybrid_search(query, target_file, target_section, limit=3)
+        results = self.db.search_candidates_and_fetch_parent(query, self.llm_service, target_file)
 
         if not results:
-            return {"structural_context": "Không có thông tin.", "dag_context": ""}
+            print("[-] Không tìm thấy câu hỏi giả định nào khớp ý định.")
+            return {"structural_context": "Không có thông tin trong giáo trình để trả lời câu hỏi này.",
+                    "dag_context": ""}
+
+        print("[+] Đã truy xuất thành công Section chứa câu trả lời!")
 
         # Gộp 3 chunks lại để tăng độ phủ cho LLM
-        chunk_text = "\n\n---\n\n".join([r["page_content"] for r in results])
+        chunk_text = results[0]["page_content"]
+        meta = results[0].get("metadata", {})
 
         # Trích xuất ngữ cảnh Đồ thị cho cả 3 chunks
         unique_anchors = set()
@@ -81,7 +86,8 @@ class QARetrievalNode:
 
         return {
             "structural_context": chunk_text,
-            "dag_context": dag_context if dag_context else "Không có nền tảng tiên quyết."}
+            "dag_context": dag_context if dag_context else "Không có nền tảng tiên quyết."
+        }
 
 
 class TeacherNode:
