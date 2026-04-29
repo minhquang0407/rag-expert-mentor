@@ -1,1 +1,1 @@
-LLM_MODEL_NAME = "gemini-3.1-flash"
+LLM_MODEL_NAME = "gemini-2.5-flash"

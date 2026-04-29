@@ -5,7 +5,8 @@ import json
 import uuid
 import sys
 from pathlib import Path
-
+from dotenv import load_dotenv
+load_dotenv()
 # Lấy đường dẫn tuyệt đối của thư mục chứa file app.py
 current_dir = Path(__file__).parent.resolve()
 if str(current_dir) not in sys.path:
@@ -16,10 +17,7 @@ from database.structural_db import QdrantVectorStore
 from database.semantic_dag import SemanticDAG
 from orchestrator.llm_service import GeminiLLMService
 from orchestrator.graph_builder import LessonOrchestrator
-from dotenv import load_dotenv
 from core.data_ingestion import run_ingestion_pipeline
-
-load_dotenv()
 
 # GIẢ ĐỊNH TRÒ ĐÃ CÓ BIẾN NÀY, NẾU KHÔNG HÃY ĐIỀN TRỰC TIẾP TÊN MODEL VÀO BÊN DƯỚI
 from config.settings import LLM_MODEL_NAME
@@ -82,6 +80,9 @@ with st.sidebar:
                     run_ingestion_pipeline(content, file_name, orchestrator.db, orchestrator.llm, orchestrator.dag)
                     st.success("🎉 Nạp dữ liệu thành công!")
 
+                    import time
+                    time.sleep(1)
+                    st.rerun()
     st.markdown("---")
     st.markdown(f"**Phiên học:** {st.session_state.thread_id}")
     st.markdown("---")
@@ -89,13 +90,14 @@ with st.sidebar:
 
     try:
         records, _ = orchestrator.db.client.scroll(
-            collection_name=orchestrator.db.collection_name,
+            collection_name=orchestrator.db.parent_coll,
             limit=10000,
             with_payload=True,
             with_vectors=False
         )
         unique_sources = list(set([r.payload.get("source") for r in records if r.payload and "source" in r.payload]))
     except Exception as e:
+
         unique_sources = []
 
     if unique_sources:
@@ -177,32 +179,79 @@ if st.session_state.get("target_section"):
             query_to_send = user_query
             action_mode_to_send = "QA"
 
+# ... (Phần UI phía trên giữ nguyên) ...
+
+# Thêm nút Toggle bật Developer Mode ở thanh Sidebar
+with st.sidebar:
+    st.markdown("---")
+    st.header("🛠️ Công cụ Phát triển")
+    dev_mode = st.toggle("🐞 Bật Developer Mode (Streaming Log)")
+
 # ==========================================
-# 5. ĐỘNG CƠ THỰC THI (KÍCH HOẠT LANGGRAPH)
+# 5. ĐỘNG CƠ THỰC THI (XỬ LÝ QUERY BẤT KỲ)
 # ==========================================
 if query_to_send and action_mode_to_send:
-    # 1. In câu hỏi của User ra màn hình
     st.session_state.messages.append({"role": "user", "content": query_to_send})
     with st.chat_message("user"):
         st.markdown(query_to_send)
 
-    # 2. In Loading Spinner & Chạy Graph
     with st.chat_message("assistant"):
-        # Giao diện loading động để chờ 5 chuyên gia làm việc
-        with st.spinner(
-                "⏳ Hội đồng 5 Chuyên gia đang cùng biên soạn bài giảng. Quá trình này có thể mất 15-30 giây..."):
-            # Lưu ý: Ta vẫn truyền checkpoint=1 vào chỉ để thỏa mãn hàm `run_lesson` kiểm tra is_first_start
-            response = orchestrator.run_lesson(
-                query=query_to_send,
-                thread_id=st.session_state.thread_id,
-                target_chapter=st.session_state.target_file,
-                target_section=st.session_state.target_section,
-                checkpoint=1,
+        if dev_mode:
+            # -----------------------------------------------------
+            # CHẾ ĐỘ STREAMING (KIỂM SOÁT TỪNG BƯỚC)
+            # -----------------------------------------------------
+            status = st.status("🔍 Đang kích hoạt chuỗi tác tử...", expanded=True)
+            final_response = ""
+
+            # Gọi hàm stream_lesson thay vì run_lesson
+            stream_generator = orchestrator.stream_lesson(
+                query=query_to_send, thread_id=st.session_state.thread_id,
+                target_chapter=st.session_state.target_file, target_section=st.session_state.target_section,
                 action_mode=action_mode_to_send
             )
 
-            st.markdown(response)
+            # Lặp qua từng Event mà LangGraph nhả ra
+            for step in stream_generator:
+                node_name = step.get("node", "unknown")
 
-    # 3. Lưu lại kết quả vào State của Streamlit
-    st.session_state.messages.append({"role": "assistant", "content": response})
+                # In thông báo hệ thống (như việc kéo DB)
+                if node_name == "system":
+                    status.write(step["message"])
+
+                # In trạng thái của từng Chuyên gia khi họ nộp bài
+                elif node_name in ["concept", "formula", "math", "algorithm", "example"]:
+                    status.write(f"✅ **[Chuyên gia {node_name.capitalize()}]** đã hoàn tất biên soạn.")
+
+                    # Nếu là node cuối cùng, lấy bài giảng ra
+                    if node_name == "example":
+                        final_response = step["state_update"].get("ai_response", "")
+
+                elif node_name == "planner":
+                    status.write(f"✅ **[Kế hoạch sư]** đã trích xuất lộ trình.")
+                    final_response = step["state_update"].get("ai_response", "")
+
+            # Khi vòng lặp stream kết thúc
+            status.update(label="Hoàn tất siêu bài giảng!", state="complete", expanded=False)
+
+            # Hiển thị bài giảng ra màn hình chính
+            if final_response:
+                st.markdown(final_response)
+            else:
+                st.warning("Không lấy được kết quả cuối cùng từ Pipeline.")
+
+        else:
+            # -----------------------------------------------------
+            # CHẾ ĐỘ NGƯỜI DÙNG BÌNH THƯỜNG (CHỜ ĐỢI HỘP ĐEN)
+            # -----------------------------------------------------
+            with st.spinner("⏳ Hội đồng 5 Chuyên gia đang cùng biên soạn bài giảng..."):
+                final_response = orchestrator.run_lesson(
+                    query=query_to_send, thread_id=st.session_state.thread_id,
+                    target_chapter=st.session_state.target_file, target_section=st.session_state.target_section,
+                    action_mode=action_mode_to_send
+                )
+                st.markdown(final_response)
+
+    # Lưu lại lịch sử
+    if final_response:
+        st.session_state.messages.append({"role": "assistant", "content": final_response})
     st.rerun()

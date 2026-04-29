@@ -5,7 +5,6 @@ from networkx.algorithms.community import greedy_modularity_communities
 from typing import List, Dict, Set, Tuple
 
 
-# Giả định lớp này tuân thủ IGraphStore đã định nghĩa trong interfaces.py
 class SemanticDAG:
     def __init__(self, llm_service, vector_store):
         """Khởi tạo Đồ thị có hướng và liên kết với các dịch vụ khác."""

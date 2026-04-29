@@ -256,7 +256,7 @@ class ExampleNode(BaseExpertNode):
 
         rule = f"""
         HEADER: '### 5. Practical Examples & Application'. 
-        TASK: Provide a concrete, solved practical example applying the theory. 
+        TASK: Provide a concrete, solved practical example applying the theory. Provide 2 to 3 detailed examples demonstrating how the theory and mathematics from this section are applied in different scenarios.
         CONSTRAINT: At the very end of your response, you MUST ask the student this exact question to close the lecture loop: 'Em đã hiểu hoàn toàn phần {group_name} chưa để Giáo sư chuyển sang phần tiếp theo?'
         """
         content = self.generate_expert_content(state, "Application Expert", rule)

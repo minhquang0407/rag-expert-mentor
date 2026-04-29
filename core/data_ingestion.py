@@ -16,35 +16,55 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     sections_dict = {}
     for i, chunk in enumerate(chunks):
+        # Fallback an toàn nếu metadata không có Section
         sec_name = chunk["metadata"].get("Section", "General")
         if sec_name not in sections_dict: sections_dict[sec_name] = []
         sections_dict[sec_name].append(chunk)
 
-    global_glossary = set()
+    print("\n[START] Pipeline Ingestion: DAG, Curriculum & QA Generation...")
 
-    print("\n[START] Pipeline Ingestion: DAG & LLM Question Generation...")
     for sec_name, chunks_list in sections_dict.items():
         print(f"\n -> Processing: {sec_name}")
         full_section_text = "\n\n".join([c["page_content"] for c in chunks_list])
 
         parent_id = hashlib.md5(f"{file_name}_{sec_name}".encode('utf-8')).hexdigest()
 
-        current_glossary = list(global_glossary)[-200:]
-        triplets = llm.extract_graph_entities(full_section_text, glossary=current_glossary)
+        # =======================================================
+        # 1. GỌI HÀM LLM MỚI (SINGLE-PASS EXTRACTION)
+        # =======================================================
+        llm_data = llm.extract_section_curriculum_and_dag(full_section_text)
 
+        curriculum_groups = llm_data.get("curriculum_groups", [])
+        triplets = llm_data.get("graph_triplets", [])
+
+        # =======================================================
+        # 2. XÂY DỰNG ĐỒ THỊ DAG
+        # =======================================================
         section_anchors = set()
         for t in triplets:
-            if "source" in t: section_anchors.add(t["source"]); global_glossary.add(t["source"])
-            if "target" in t: section_anchors.add(t["target"]); global_glossary.add(t["target"])
+            if "source" in t: section_anchors.add(t["source"])
+            if "target" in t: section_anchors.add(t["target"])
 
-        if triplets: dag.build_graph_from_triplets(triplets)
+        if triplets:
+            dag.build_graph_from_triplets(triplets)
 
+        # =======================================================
+        # 3. LƯU GIÁO ÁN VÀO QDRANT
+        # =======================================================
+        for group in curriculum_groups:
+            db.upsert_curriculum_group(group, parent_id, file_name, sec_name)
+
+        print(f"    + Đã lưu {len(curriculum_groups)} Cụm thực thể (Giáo án).")
+
+        # =======================================================
+        # 4. LƯU SECTION GỐC & CÂU HỎI (DÀNH CHO LUỒNG Q&A)
+        # =======================================================
         questions = llm.generate_hypothetical_questions(full_section_text, num_questions=5)
         print(f"    + Đã sinh {len(questions)} câu hỏi giả định.")
 
         parent_metadata = {
             "source": file_name,
-            "Section": sec_name,
+            "section": sec_name,
             "anchor_nodes": ", ".join(list(section_anchors))
         }
 

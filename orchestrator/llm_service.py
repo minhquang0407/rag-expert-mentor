@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Dict
+from typing import List, Dict, Any
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 load_dotenv()
@@ -137,7 +137,7 @@ class GeminiLLMService:
         1. Return ONLY a valid JSON array of strings: ["question 1", "question 2", ...].
         2. The questions must cover the core definitions, theorems, and practical applications in the text.
         3. Do NOT include answers. No markdown outside the JSON array.
-
+        4. CRITICAL JSON RULE: If you use any LaTeX mathematical formulas inside the JSON string values, you MUST double-escape the backslashes. For example, write \\\\frac instead of \\frac, and \\\\rightarrow instead of \\rightarrow. Failure to double-escape will crash the JSON parser.
         [TEXTBOOK SECTION]:
         {section_text}
         """

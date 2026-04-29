@@ -138,3 +138,63 @@ class LessonOrchestrator:
         final_state = self.app.invoke(initial_state, config=config)
         ai_message = final_state.get("ai_response", "Error: Không nhận được bài giảng.")
         return ai_message
+
+    def stream_lesson(self, query: str, thread_id: str, target_chapter: str = "", target_section: str = "",
+                      action_mode: str = "QA"):
+        """
+        - Lí do tại sao dùng: Dành cho Developer Mode. Nhả (yield) từng bước thực thi của LangGraph ra UI thay vì bắt người dùng chờ.
+        - Trả về: Một Generator (yield) chứa tên Node vừa chạy và State hiện tại.
+        """
+        print(f"\n[STREAMING MODE] 🎓 NHẬN LỆNH: {query}")
+
+        config = {"configurable": {"thread_id": thread_id}}
+        is_first_start = (action_mode == "START_LESSON")
+        current_seq_idx = 0
+        entity_groups = []
+
+        try:
+            current_state = self.app.get_state(config)
+            if current_state and current_state.values:
+                current_seq_idx = current_state.values.get("current_seq_index", 0)
+                entity_groups = current_state.values.get("entity_groups", [])
+
+                if action_mode == "NEXT_GROUP":
+                    current_seq_idx += 1
+        except Exception as e:
+            pass  # Bỏ qua lỗi ở lần chạy đầu tiên
+
+        # Kéo dữ liệu từ Qdrant
+        if not entity_groups and target_chapter and target_section:
+            yield {"node": "system", "message": "📥 Đang kéo giáo án từ Qdrant..."}
+            try:
+                entity_groups = self.db.get_curriculum_groups(target_file=target_chapter, target_section=target_section)
+            except Exception as e:
+                yield {"node": "error", "message": f"⚠️ Lỗi Qdrant: {e}"}
+                return
+
+        if entity_groups and current_seq_idx >= len(entity_groups):
+            yield {"node": "finish", "message": "🎉 Đã hoàn thành Section!"}
+            return
+
+        initial_state = {
+            "student_query": query,
+            "target_file": target_chapter,
+            "target_section": target_section,
+            "action_mode": action_mode,
+            "language": "Tiếng Việt",
+            "is_planning_phase": True if is_first_start else False,
+            "entity_groups": entity_groups,
+            "current_seq_index": current_seq_idx,
+            "lecture_parts": []
+        }
+
+        # SỬ DỤNG STREAMING
+        # app.stream sẽ trả về từng bước (event) mỗi khi một Node thực thi xong
+        for event in self.app.stream(initial_state, config=config):
+            for node_name, state_update in event.items():
+                # Yield (nhả) ra cho giao diện Streamlit tên của Node vừa chạy xong,
+                # và nội dung mới nhất mà Node đó vừa viết vào state (nếu có)
+                yield {
+                    "node": node_name,
+                    "state_update": state_update
+                }
