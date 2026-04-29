@@ -4,25 +4,35 @@ import operator
 
 class LessonState(TypedDict):
     """
-    Cấu trúc dữ liệu toàn cục chạy xuyên suốt phiên làm việc của LangGraph.
-    Mọi Node (Teacher, Evaluator) đều chỉ đọc và ghi vào đây.
+    - Lí do tại sao dùng: Định nghĩa cấu trúc Máy trạng thái toàn cục cho LangGraph.
+    - Chức năng: Lưu trữ câu hỏi, lịch sử hội thoại có cộng dồn (reducer), và lộ trình giáo án thực thể.
+    - Cách dùng: Được khởi tạo ở Router và truyền vào tham số của hàm `__call__` trong mọi Node.
     """
-    # 1. Định danh & Vị trí bài học
+    # ==========================================
+    # 1. ĐỊNH DANH & VỊ TRÍ BÀI HỌC
+    # ==========================================
     student_query: str  # Câu hỏi hiện tại của sinh viên
-    target_chapter: str  # Chương đang học (ví dụ: "Chương 1")
-    target_file: str
-    current_checkpoint: int  # 1: Trực giác hình học, 2: Toán học, 3: Code
-    action_mode: str
-    # 2. Ngữ cảnh RAG (Được nhồi vào từ Tầng 1)
-    structural_context: str  # Văn bản kéo lên từ ChromaDB
-    dag_context: str  # First Principles kéo lên từ NetworkX
+    target_file: str  # Tên file PDF/Sách đang học
+    target_section: str  # Mục lục đang học (VD: "Section 1.1")
+    current_checkpoint: int  # Checkpoint hiện tại (1: Bản chất, 2: Toán học, 3: Q&A)
+    action_mode: str  # Phân luồng từ UI (LESSON_PROGRESS hoặc QA)
+    language: str  # Ngôn ngữ giảng dạy (English, Tiếng Việt)
 
-    # 3. Lịch sử & Đánh giá
+    # ==========================================
+    # 2. ĐIỀU HƯỚNG THỰC THỂ (ENTITY-BASED)
+    # ==========================================
+    is_planning_phase: bool  # Cờ hiệu: True = Chờ in Kế hoạch, False = Đang giảng bài
+    entity_groups: List[Dict[str, Any]]  # Mảng JSON chứa các Cụm Thực thể và Verbatim Text
+    current_seq_index: int  # Con trỏ duyệt qua entity_groups (bắt đầu từ 0)
+
+    # ==========================================
+    # 3. LỊCH SỬ & ĐÁNH GIÁ (STATEFUL MEMORY)
+    # ==========================================
     # Sử dụng operator.add để LangGraph tự động nối (append) tin nhắn mới thay vì ghi đè
     chat_history: Annotated[List[Dict[str, str]], operator.add]
 
-    # Trạng thái đánh giá từ Evaluator Agent (Pass/Fail)
-    assessment_result: Dict[str, Any]
+    ai_response: str  # Câu trả lời của Giáo sư AI chuẩn bị in ra màn hình
+    assessment_result: Dict[str, Any]  # Trạng thái đánh giá từ Evaluator Agent (Pass/Fail)
 
-    # Language
-    language: str
+    # Thêm vào bên dưới cùng của class LessonState
+    lecture_parts: List[str]

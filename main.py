@@ -6,15 +6,13 @@ import uuid
 import sys
 from pathlib import Path
 
-# Lấy đường dẫn tuyệt đối của thư mục chứa file main.py
+# Lấy đường dẫn tuyệt đối của thư mục chứa file app.py
 current_dir = Path(__file__).parent.resolve()
-
-# Thêm đường dẫn này vào sys.path nếu nó chưa có
 if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
 from langgraph.checkpoint.sqlite import SqliteSaver
-from database.structural_db import QdrantVectorStore  # Đảm bảo file database/qdrant_db.py tồn tại
+from database.structural_db import QdrantVectorStore
 from database.semantic_dag import SemanticDAG
 from orchestrator.llm_service import GeminiLLMService
 from orchestrator.graph_builder import LessonOrchestrator
@@ -23,14 +21,17 @@ from core.data_ingestion import run_ingestion_pipeline
 
 load_dotenv()
 
+# GIẢ ĐỊNH TRÒ ĐÃ CÓ BIẾN NÀY, NẾU KHÔNG HÃY ĐIỀN TRỰC TIẾP TÊN MODEL VÀO BÊN DƯỚI
 from config.settings import LLM_MODEL_NAME
+
+
 # ==========================================
 # 1. KHỞI TẠO HỆ THỐNG
 # ==========================================
 @st.cache_resource
 def init_system():
     db = QdrantVectorStore(collection_name="math_curriculum")
-    llm = GeminiLLMService(model_name=LLM_MODEL_NAME,temperature=0.3)
+    llm = GeminiLLMService(model_name=LLM_MODEL_NAME, temperature=0.3)
     dag = SemanticDAG(llm_service=llm, vector_store=db)
 
     conn = sqlite3.connect("memory_checkpoint.sqlite", check_same_thread=False)
@@ -46,15 +47,15 @@ orchestrator = init_system()
 # 2. QUẢN LÝ STATE (TRẠNG THÁI GIAO DIỆN)
 # ==========================================
 if "thread_id" not in st.session_state:
-    st.session_state.thread_id = "session_math_001"
-if "current_checkpoint" not in st.session_state:
-    st.session_state.current_checkpoint = 1
+    st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "language" not in st.session_state:
-    st.session_state.language = "English"
+    st.session_state.language = "Tiếng Việt"
 if "input_mode" not in st.session_state:
     st.session_state.input_mode = "LOCKED"
+
+# Đã XÓA biến st.session_state.current_checkpoint vì LangGraph giờ tự quản lý nội bộ
 
 # ==========================================
 # 3. SIDEBAR - ĐIỀU HƯỚNG & NẠP DỮ LIỆU
@@ -69,8 +70,6 @@ with st.sidebar:
 
     if uploaded_file is not None:
         file_name = uploaded_file.name
-
-        # SỬA LỖI 1: Tái sử dụng hàm get_section_exact để kiểm tra xem sách đã nạp chưa
         existing_docs = orchestrator.db.get_section_exact(target_file=file_name, target_section="")
 
         if existing_docs and len(existing_docs) > 0:
@@ -84,18 +83,16 @@ with st.sidebar:
                     st.success("🎉 Nạp dữ liệu thành công!")
 
     st.markdown("---")
-    st.markdown(f"**Trạng thái:** Đang ở Checkpoint {st.session_state.current_checkpoint}")
     st.markdown(f"**Phiên học:** {st.session_state.thread_id}")
     st.markdown("---")
     st.header("📖 Giáo Trình Học Tập")
 
-    # SỬA LỖI 2: Dùng lệnh Scroll của Qdrant thay cho .get() của ChromaDB
     try:
         records, _ = orchestrator.db.client.scroll(
             collection_name=orchestrator.db.collection_name,
-            limit=10000,  # Quét tối đa 10k chunks
-            with_payload=True,  # Lấy Metadata
-            with_vectors=False  # Tắt load Vector để tiết kiệm RAM
+            limit=10000,
+            with_payload=True,
+            with_vectors=False
         )
         unique_sources = list(set([r.payload.get("source") for r in records if r.payload and "source" in r.payload]))
     except Exception as e:
@@ -118,7 +115,6 @@ with st.sidebar:
                     for sec in sections:
                         if st.button(f"📄 {sec}", key=f"btn_{selected_file}_{sec}"):
                             st.session_state.target_section = sec
-                            st.session_state.current_checkpoint = 1
                             st.session_state.messages = []
                             st.session_state.input_mode = "LOCKED"
                             st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
@@ -135,8 +131,10 @@ with st.sidebar:
 # ==========================================
 # 4. KHU VỰC HIỂN THỊ CHÍNH (MAIN CHAT)
 # ==========================================
-st.title("Giáo sư AI - Toán học & Giải thuật")
+st.title("Giáo sư AI - Chuyên gia Đa Hệ")
+st.caption("Kiến trúc Multi-Agent Pipeline: Tự động tổng hợp trực giác, toán học và thuật toán.")
 
+# Render lịch sử chat
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -144,25 +142,23 @@ for msg in st.session_state.messages:
 query_to_send = None
 action_mode_to_send = None
 
+# Vùng Điều khiển Nút bấm
 if st.session_state.get("target_section"):
     col1, col2 = st.columns(2)
 
     with col1:
         if len(st.session_state.messages) == 0:
-            if st.button("Start", use_container_width=True):
-                query_to_send = "Hãy bắt đầu giảng bài mục này."
-                action_mode_to_send = "LESSON_PROGRESS"
+            # Nút bắt đầu (Sẽ kích hoạt PlannerNode)
+            if st.button("🚀 Bắt đầu lập kế hoạch", use_container_width=True):
+                query_to_send = "Hãy bắt đầu bài học."
+                action_mode_to_send = "START_LESSON"
                 st.session_state.input_mode = "LOCKED"
         else:
-            if st.session_state.current_checkpoint < 3:
-                if st.button(f"Continue (Chuyển sang Checkpoint {st.session_state.current_checkpoint + 1})",
-                             use_container_width=True):
-                    st.session_state.current_checkpoint += 1
-                    query_to_send = f"Tôi đã hiểu. Hãy tiếp tục giảng Checkpoint {st.session_state.current_checkpoint}."
-                    action_mode_to_send = "LESSON_PROGRESS"
-                    st.session_state.input_mode = "LOCKED"
-            else:
-                st.success("✅ Đã hoàn tất 3 Checkpoint của mục này!")
+            # Nút đi tiếp (Sẽ kích hoạt chuỗi 5 Chuyên gia)
+            if st.button("✅ Đã hiểu, tiếp tục phần tiếp theo", use_container_width=True):
+                query_to_send = "Em đã hiểu phần này, sẵn sàng tiếp tục!"
+                action_mode_to_send = "NEXT_GROUP"
+                st.session_state.input_mode = "LOCKED"
 
     with col2:
         if st.session_state.input_mode == "LOCKED":
@@ -174,31 +170,39 @@ if st.session_state.get("target_section"):
                 st.session_state.input_mode = "LOCKED"
                 st.rerun()
 
+    # Vùng nhập Text tự do
     if st.session_state.input_mode == "UNLOCKED":
-        user_query = st.chat_input("Nhập câu hỏi tự do của bạn...")
+        user_query = st.chat_input("Nhập câu hỏi tự do của bạn để hỏi Giáo sư...")
         if user_query:
             query_to_send = user_query
             action_mode_to_send = "QA"
 
 # ==========================================
-# 5. ĐỘNG CƠ THỰC THI (XỬ LÝ QUERY BẤT KỲ)
+# 5. ĐỘNG CƠ THỰC THI (KÍCH HOẠT LANGGRAPH)
 # ==========================================
 if query_to_send and action_mode_to_send:
+    # 1. In câu hỏi của User ra màn hình
     st.session_state.messages.append({"role": "user", "content": query_to_send})
     with st.chat_message("user"):
         st.markdown(query_to_send)
 
+    # 2. In Loading Spinner & Chạy Graph
     with st.chat_message("assistant"):
-        with st.spinner("Đang tìm kiếm cơ sở lý thuyết và biên soạn bài giảng..."):
+        # Giao diện loading động để chờ 5 chuyên gia làm việc
+        with st.spinner(
+                "⏳ Hội đồng 5 Chuyên gia đang cùng biên soạn bài giảng. Quá trình này có thể mất 15-30 giây..."):
+            # Lưu ý: Ta vẫn truyền checkpoint=1 vào chỉ để thỏa mãn hàm `run_lesson` kiểm tra is_first_start
             response = orchestrator.run_lesson(
                 query=query_to_send,
                 thread_id=st.session_state.thread_id,
                 target_chapter=st.session_state.target_file,
-                checkpoint=st.session_state.current_checkpoint,
                 target_section=st.session_state.target_section,
+                checkpoint=1,
                 action_mode=action_mode_to_send
             )
+
             st.markdown(response)
 
+    # 3. Lưu lại kết quả vào State của Streamlit
     st.session_state.messages.append({"role": "assistant", "content": response})
     st.rerun()

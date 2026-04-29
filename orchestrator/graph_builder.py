@@ -1,20 +1,24 @@
 from langgraph.graph import StateGraph, START, END
-from .state_machine import LessonState
-from .langgraph_nodes import LessonRetrievalNode, QARetrievalNode, TeacherNode
+from typing import Literal
+from orchestrator.state_machine import LessonState
 
-
-def route_action(state: LessonState) -> str:
-    """
-    Hàm định tuyến logic (Router).
-    Kiểm tra cờ 'action_mode' trong State để quyết định nhánh tiếp theo.
-    """
-    mode = state.get("action_mode", "QA")
-    if mode == "LESSON_PROGRESS":
-        return "lesson_retrieve"
-    return "qa_retrieve"
+from orchestrator.langgraph_nodes import (
+    PlannerNode,
+    QARetrievalNode,
+    ConceptNode,
+    FormulaNode,
+    MathNode,
+    AlgorithmNode,
+    ExampleNode
+)
 
 
 class LessonOrchestrator:
+    """
+    - Lí do tại sao dùng: Xây dựng Đồ thị Luồng làm việc (Workflow) cho 5 Chuyên gia AI.
+    - Chức năng: Khởi tạo Nodes, nối các cạnh (Edges) thành dây chuyền, và quản lý con trỏ Cụm thực thể (Sequence Index).
+    """
+
     def __init__(self, db_store, dag_store, llm_service, checkpointer=None):
         self.db = db_store
         self.dag = dag_store
@@ -25,49 +29,112 @@ class LessonOrchestrator:
     def _build_graph(self):
         workflow = StateGraph(LessonState)
 
-        # 1. Khai báo các Node
-        workflow.add_node("lesson_retrieve", LessonRetrievalNode(self.db, self.dag))
-        workflow.add_node("qa_retrieve", QARetrievalNode(self.db, self.dag, self.llm))
-        workflow.add_node("teacher", TeacherNode(self.llm))
+        workflow.add_node("planner", PlannerNode(self.db))
+        workflow.add_node("qa", QARetrievalNode(self.db, self.dag, self.llm))
 
-        # 2. Khai báo CẠNH ĐIỀU KIỆN (Ngã ba định tuyến từ START)
-        workflow.add_conditional_edges(
-            START,
-            route_action,
+        # Hội đồng 5 Chuyên gia
+        workflow.add_node("concept", ConceptNode(self.llm, self.dag))
+        workflow.add_node("formula", FormulaNode(self.llm, self.dag))
+        workflow.add_node("math", MathNode(self.llm, self.dag))
+        workflow.add_node("algorithm", AlgorithmNode(self.llm, self.dag))
+        workflow.add_node("example", ExampleNode(self.llm, self.dag))
+
+        workflow.set_conditional_entry_point(
+            self.route_start,
             {
-                "lesson_retrieve": "lesson_retrieve",
-                "qa_retrieve": "qa_retrieve"
+                "to_planner": "planner",
+                "to_pipeline": "concept",  # Bắt đầu dây chuyền từ Concept
+                "to_qa": "qa"
             }
         )
 
-        # 3. Khai báo các Cạnh hội tụ (Cả 2 đường đều dẫn tới Teacher)
-        workflow.add_edge("lesson_retrieve", "teacher")
-        workflow.add_edge("qa_retrieve", "teacher")
-        workflow.add_edge("teacher", END)
+        workflow.add_edge("planner", END)
+        workflow.add_edge("qa", END)
+
+        workflow.add_edge("concept", "formula")
+        workflow.add_edge("formula", "math")
+        workflow.add_edge("math", "algorithm")
+        workflow.add_edge("algorithm", "example")
+        workflow.add_edge("example", END)  # Xong 1 Cụm thực thể -> Dừng lại cho sinh viên đọc
 
         return workflow.compile(checkpointer=self.checkpointer)
 
+    def route_start(self, state: LessonState) -> str:
+        """Định tuyến tường minh dựa trên Action Mode thay vì dò chữ."""
+        action_mode = state.get("action_mode", "QA")
+
+        if action_mode == "QA":
+            return "to_qa"
+
+        if action_mode == "START_LESSON":
+            return "to_planner"
+
+        # Nếu là NEXT_GROUP thì chạy thẳng vào dây chuyền 5 Chuyên gia
+        return "to_pipeline"
+
     def run_lesson(self, query: str, thread_id: str, target_chapter: str = "", target_section: str = "",
-                   checkpoint: int = 1, action_mode: str = "QA") -> str:
-        """Hàm giao tiếp với Sinh viên (Endpoint)."""
+                   action_mode: str = "QA") -> str:
+        """
+        Endpoint giao tiếp với UI. Điều hướng bằng Action Mode tường minh.
+        """
         print(f"\n" + "=" * 50)
         print(f"🎓 HỆ THỐNG NHẬN LỆNH: {query} | MODE: {action_mode}")
         print("=" * 50)
 
         config = {"configurable": {"thread_id": thread_id}}
 
+        # Cờ này chỉ true khi mode là START_LESSON
+        is_first_start = (action_mode == "START_LESSON")
+
+        current_seq_idx = 0
+        entity_groups = []
+
+        # ==========================================
+        # 1. KHÔI PHỤC TRẠNG THÁI VÀ TÍNH TOÁN INDEX
+        # ==========================================
+        try:
+            current_state = self.app.get_state(config)
+            if current_state and current_state.values:
+                current_seq_idx = current_state.values.get("current_seq_index", 0)
+                entity_groups = current_state.values.get("entity_groups", [])
+
+                # Không cần dò chữ "hiểu, ok" nữa. Nếu UI gửi tín hiệu NEXT_GROUP -> auto tăng!
+                if action_mode == "NEXT_GROUP":
+                    current_seq_idx += 1
+                    print(f"🔄 Đang chuyển sang Cụm Thực Thể số: {current_seq_idx}")
+        except Exception as e:
+            print(f"Không thể đọc state cũ (Có thể là phiên mới): {e}")
+
+        # ==========================================
+        # 2. KÉO DỮ LIỆU THẬT TỪ QDRANT
+        # ==========================================
+        if not entity_groups and target_chapter and target_section:
+            print(f"📥 Đang kéo giáo án thật từ Qdrant cho: {target_chapter} -> {target_section}")
+            try:
+                entity_groups = self.db.get_curriculum_groups(target_file=target_chapter, target_section=target_section)
+                if not entity_groups:
+                    return f"⚠️ Lỗi: Không tìm thấy giáo án cho phần '{target_section}'."
+            except Exception as e:
+                return f"⚠️ Lỗi truy xuất CSDL Qdrant: {e}"
+
+        if entity_groups and current_seq_idx >= len(entity_groups):
+            return "🎉 Chúc mừng em! Chúng ta đã hoàn thành xuất sắc toàn bộ nội dung của Section này."
+
+        # ==========================================
+        # 3. KÍCH HOẠT ĐỒ THỊ
+        # ==========================================
         initial_state = {
             "student_query": query,
             "target_file": target_chapter,
             "target_section": target_section,
             "action_mode": action_mode,
-            "current_checkpoint": checkpoint,
-            "structural_context": "",
-            "dag_context": "",
-            "chat_history": [],
-            "assessment_result": {}
+            "language": "Tiếng Việt",
+            "is_planning_phase": True if is_first_start else False,
+            "entity_groups": entity_groups,
+            "current_seq_index": current_seq_idx,
+            "lecture_parts": []
         }
 
         final_state = self.app.invoke(initial_state, config=config)
-        ai_message = final_state["chat_history"][-1].content
+        ai_message = final_state.get("ai_response", "Error: Không nhận được bài giảng.")
         return ai_message

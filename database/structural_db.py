@@ -40,6 +40,35 @@ class QdrantVectorStore:
             ids=[section_id]
         )
 
+    def get_curriculum_groups(self, target_file: str, target_section: str) -> list:
+        """
+        - Chức năng: Kéo mảng JSON curriculum_groups từ Qdrant dựa vào Tên sách và Mục lục.
+        """
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        query_filter = Filter(
+            must=[
+                FieldCondition(key="source", match=MatchValue(value=target_file)),
+                FieldCondition(key="section", match=MatchValue(value=target_section)),
+                FieldCondition(key="type", match=MatchValue(value="curriculum_group"))
+                # Nếu lúc nạp trò có lưu trường type này
+            ]
+        )
+
+        records, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=query_filter,
+            limit=100,
+            with_payload=True
+        )
+
+        groups = []
+        for r in records:
+            if "curriculum_data" in r.payload:
+                groups.append(r.payload["curriculum_data"])
+
+        groups.sort(key=lambda x: x.get("seq_id", 0))
+        return groups
     def upsert_questions(self, questions: List[str], parent_id: str, source_file: str):
         """Lưu các câu hỏi giả định vào Bảng Con, trỏ ngược về Bảng Cha."""
         if not questions: return
