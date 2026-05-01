@@ -1,128 +1,133 @@
-import heapq
-
-import networkx as nx
-from networkx.algorithms.community import greedy_modularity_communities
-from typing import List, Dict, Set, Tuple
+import os
+from neo4j import GraphDatabase
+from typing import List, Dict, Any
 
 
-class SemanticDAG:
-    def __init__(self, llm_service, vector_store):
-        """Khởi tạo Đồ thị có hướng và liên kết với các dịch vụ khác."""
-        self.graph = nx.DiGraph()
-        self.llm = llm_service  # Dùng để tóm tắt cộng đồng
-        self.db = vector_store  # Dùng để lưu bản tóm tắt cộng đồng
+class Neo4jManager:
+    """
+    - Lí do tại sao dùng: Quản lý Đồ thị Tri thức toàn cục, giải quyết triệt để lỗi ghi đè dữ liệu khi nhiều sách có cùng tên Section.
+    """
 
-    def build_graph_from_triplets(self, triplets: List[Dict[str, str]]):
+    def __init__(self, uri=None, user=None, password=None):
+        self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
+        self.user = user or os.getenv("NEO4J_USERNAME", "neo4j")
+        self.password = password or os.getenv("NEO4J_PASSWORD", "ExpertMentor2026")
+        try:
+            self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
+            self.driver.verify_connectivity()
+            self._initialize_user()
+        except Exception as e:
+            print(f"[Neo4j] ❌ Lỗi kết nối: {e}")
+
+    def close(self):
+        if self.driver:
+            self.driver.close()
+
+    def _initialize_user(self, user_id: str = "guest_01"):
+        query = "MERGE (u:User {id: $user_id}) RETURN u"
+        with self.driver.session() as session:
+            session.run(query, user_id=user_id)
+
+    def save_graph_triplets(self, triplets: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str,
+                            main_entities: List[str]):
         """
-        Lí do tại sao dùng: Nạp dữ liệu JSON vào cấu trúc Toán học NetworkX.
-        Chức năng: Cập nhật các Node và Edge, bổ sung Trọng số Khoảng cách (Weight).
+        - Chức năng: Lưu Graph. Tạo chuỗi định vị tuyệt đối (Absolute Locator) để tránh trùng lặp Section giữa các File.
+        - Tham số mới: Nhận thêm file_name và chapter_name.
         """
-        for triplet in triplets:
-            source = triplet.get("source")
-            target = triplet.get("target")
-            relation = triplet.get("relation", "")
-            # Lấy trọng số, mặc định là 5 (mức trung bình) nếu LLM quên xuất ra
-            weight = triplet.get("weight", 5)
+        allowed_relations = {"PREREQUISITE_OF", "RELATES_TO", "PART_OF", "DESCRIBES"}
 
-            if source and target:
-                # Đảm bảo Node tồn tại
-                if not self.graph.has_node(source):
-                    self.graph.add_node(source)
-                if not self.graph.has_node(target):
-                    self.graph.add_node(target)
+        # Tạo chuỗi định vị tuyệt đối (Ví dụ: "a_math.md :: Chương 2 :: 2.2 Chuẩn hóa")
+        locator = f"{file_name}::{chapter_name}::{section_title}"
 
-                # Thêm hoặc cập nhật Cạnh với Trọng số (weight)
-                self.graph.add_edge(source, target, relation=relation, weight=int(weight))
+        with self.driver.session() as session:
+            # 1. Cập nhật các main_entity
+            for main_ent in main_entities:
+                if not main_ent: continue
+                session.run("""
+                MERGE (c:Concept {id: $id})
+                SET c.is_main = true
+                SET c.source_locators = CASE WHEN $loc IN coalesce(c.source_locators, []) THEN c.source_locators ELSE coalesce(c.source_locators, []) + $loc END
+                """, id=main_ent.strip(), loc=locator)
 
-        print(
-            f"[*] Cập nhật DAG: Hiện có {self.graph.number_of_nodes()} đỉnh và {self.graph.number_of_edges()} cạnh có trọng số.")
+            # 2. Xây dựng các cạnh và cập nhật micro_entities
+            for t in triplets:
+                source = str(t.get("source", "")).strip()
+                target = str(t.get("target", "")).strip()
+                raw_rel = str(t.get("relation", "RELATES_TO")).strip().upper().replace(" ", "_")
 
-    def detect_and_summarize_communities(self) -> None:
-        """Thực thi thuật toán gom cụm và gọi LLM tóm tắt."""
-        if self.graph.number_of_nodes() == 0:
-            return
+                if not source or not target: continue
+                rel = raw_rel if raw_rel in allowed_relations else "RELATES_TO"
 
-        print("[*] [SemanticDAG] Đang chạy thuật toán phân rã Modularity...")
-        # Modularity yêu cầu đồ thị vô hướng
-        undirected_g = self.graph.to_undirected()
-        communities = list(greedy_modularity_communities(undirected_g))
+                cypher_query = f"""
+                MERGE (c1:Concept {{id: $source}})
+                SET c1.source_locators = CASE WHEN $loc IN coalesce(c1.source_locators, []) THEN c1.source_locators ELSE coalesce(c1.source_locators, []) + $loc END
 
-        print(f"[*] [SemanticDAG] Phát hiện {len(communities)} cộng đồng tri thức.")
+                MERGE (c2:Concept {{id: $target}})
+                SET c2.source_locators = CASE WHEN $loc IN coalesce(c2.source_locators, []) THEN c2.source_locators ELSE coalesce(c2.source_locators, []) + $loc END
 
-        for i, comm in enumerate(communities):
-            comm_id = f"community_{i}"
-            nodes_list = list(comm)
+                WITH c1, c2
+                CALL apoc.create.relationship(c1, $rel, {{}}, c2) YIELD rel
+                RETURN rel
+                """
+                session.run(cypher_query, source=source, target=target, rel=rel, loc=locator)
 
-            # 1. Đánh dấu ID cộng đồng vào từng đỉnh
-            for node in nodes_list:
-                self.graph.nodes[node]['community_id'] = comm_id
-
-            # 2. Gọi LLM viết First Principles
-            summary = self.llm.summarize_community(nodes_list)
-
-            # 3. Lưu vào ChromaDB (Ký hiệu metadata đặc biệt để phân biệt với text thường)
-            self.db.upsert_documents(
-                chunks=[summary],
-                metadatas=[{"type": "community_summary", "community_id": comm_id}],
-                ids=[comm_id]
-            )
-
-    def get_backward_context(self, anchor_nodes: List[str], max_nodes: int = 15, max_weight: int = 6) -> str:
+    # ... (Các hàm mark_concept_as_learned, get_unlearned_prerequisites, get_learned_prerequisites, get_concept_subgraph giữ nguyên y hệt bản cũ) ...
+    def mark_concept_as_learned(self, concept_id: str, user_id: str = "guest_01"):
+        query = """
+        MATCH (u:User {id: $user_id})
+        MATCH (c:Concept {id: $concept_id})
+        MERGE (u)-[r:HAS_LEARNED]->(c)
+        SET r.timestamp = timestamp()
         """
-        - Lí do tại sao dùng: Trích xuất "Nguyên lý thứ nhất" (First Principles) làm nền tảng cho bài học hiện tại, đảm bảo triết lý Sư phạm Bottom-Up.
-        - Chức năng: Thuật toán Weighted Reverse BFS (Dijkstra lội ngược). Tìm các đường đi có trọng số thấp (liên kết chặt chẽ) dẫn tới các Điểm neo.
-        - Cách dùng: Gọi bên trong RetrievalNode sau khi đã lấy được danh sách anchor_nodes từ Qdrant.
-        - Tham số:
-            - `anchor_nodes`: Danh sách tên các thực thể hiện tại.
-            - `max_nodes`: Giới hạn số lượng đỉnh lội ngược (Chống tràn RAM/Token).
-            - `max_weight`: Ngưỡng lọc trọng số. Bỏ qua các liên kết lỏng lẻo (> 6).
-        - Trả về, Kiểu trả về: `str` - Chuỗi văn bản đã định dạng XML chứa các Mối quan hệ logic.
-        - Các hàm thay thế nếu có: Reverse DFS (Duyệt theo chiều sâu), nhưng không tối ưu bằng BFS Priority Queue.
+        with self.driver.session() as session:
+            session.run(query, user_id=user_id, concept_id=concept_id)
+
+    def get_unlearned_prerequisites(self, target_concept: str, max_depth: int = 2, user_id: str = "guest_01") -> List[
+        str]:
+        query = f"""
+        MATCH (target:Concept {{id: $target_concept}})
+        MATCH (prereq:Concept)-[:PREREQUISITE_OF*1..{max_depth}]->(target)
+        OPTIONAL MATCH (u:User {{id: $user_id}})-[:HAS_LEARNED]->(prereq)
+        WITH prereq, u
+        WHERE u IS NULL
+        RETURN DISTINCT prereq.id AS missing_concept
         """
-        if not anchor_nodes:
-            return ""
+        with self.driver.session() as session:
+            result = session.run(query, target_concept=target_concept, user_id=user_id)
+            return [record["missing_concept"] for record in result]
 
-        # Khởi tạo Hàng đợi ưu tiên (Priority Queue) cho thuật toán Dijkstra
-        # Cấu trúc phần tử: (Tổng trọng số tích lũy, Tên đỉnh hiện tại)
-        pq: List[Tuple[int, str]] = []
-        visited_nodes: Set[str] = set()
-        collected_edges: Set[Tuple[str, str, str]] = set()
+    def get_learned_prerequisites(self, target_concept: str, max_depth: int = 3, user_id: str = "guest_01") -> List[
+        str]:
+        query = f"""
+        MATCH (target:Concept {{id: $target_concept}})
+        MATCH (prereq:Concept)-[:PREREQUISITE_OF*1..{max_depth}]->(target)
+        MATCH (u:User {{id: $user_id}})-[:HAS_LEARNED]->(prereq)
+        RETURN DISTINCT prereq.id AS learned_concept
+        """
+        with self.driver.session() as session:
+            result = session.run(query, target_concept=target_concept, user_id=user_id)
+            return [record["learned_concept"] for record in result]
 
-        # Nạp các đỉnh gốc vào hàng đợi
-        for anchor in anchor_nodes:
-            if self.graph.has_node(anchor):
-                heapq.heappush(pq, (0, anchor))
-                visited_nodes.add(anchor)
-
-        # Thực thi Thuật toán Lan truyền ngược (Reverse Propagation)
-        nodes_processed = 0
-        while pq and nodes_processed < max_nodes:
-            current_cost, current_node = heapq.heappop(pq)
-            nodes_processed += 1
-
-            # Lệnh predecessors(): Cực kỳ quan trọng. Chỉ lấy các đỉnh đi VÀO đỉnh hiện tại (Tiền quyết định)
-            for predecessor in self.graph.predecessors(current_node):
-                edge_data = self.graph.get_edge_data(predecessor, current_node)
-                weight = edge_data.get('weight', 5)
-
-                # Bộ lọc Trọng số: Bỏ qua các cạnh có quan hệ quá lỏng lẻo
-                if weight <= max_weight:
-                    relation = edge_data.get('relation', 'liên kết với')
-                    # Thu thập Cạnh (Edge) này vào bộ nhớ
-                    collected_edges.add((predecessor, relation, current_node))
-
-                    if predecessor not in visited_nodes:
-                        visited_nodes.add(predecessor)
-                        # Đẩy đỉnh cha vào hàng đợi để tiếp tục lội ngược với chi phí cộng dồn
-                        heapq.heappush(pq, (current_cost + weight, predecessor))
-
-        # Định dạng đầu ra siêu nén (XML Logic Paths) cho LLM
-        if not collected_edges:
-            return ""
-
-        context_lines = ["<LOGICAL_CHAINS>"]
-        for src, rel, dst in collected_edges:
-            context_lines.append(f"  [{src}] --({rel})--> [{dst}]")
-        context_lines.append("</LOGICAL_CHAINS>")
-
-        return "\n".join(context_lines)
+    def get_concept_subgraph(self, target_concept: str, max_depth: int = 1) -> Dict[str, List[str]]:
+        query = f"""
+        MATCH (target:Concept {{id: $target_concept}})
+        OPTIONAL MATCH (prereq:Concept)-[:PREREQUISITE_OF*1..{max_depth}]->(target)
+        OPTIONAL MATCH (target)-[:PREREQUISITE_OF*1..{max_depth}]->(leads_to:Concept)
+        OPTIONAL MATCH (target)-[:RELATES_TO]-(related:Concept)
+        RETURN 
+            collect(DISTINCT prereq.id) AS prerequisites,
+            collect(DISTINCT leads_to.id) AS leads_to,
+            collect(DISTINCT related.id) AS related_concepts
+        """
+        with self.driver.session() as session:
+            result = session.run(query, target_concept=target_concept).single()
+            prereqs = [p for p in result["prerequisites"] if p is not None] if result and result[
+                "prerequisites"] else []
+            leads = [l for l in result["leads_to"] if l is not None] if result and result["leads_to"] else []
+            related = [r for r in result["related_concepts"] if r is not None] if result and result[
+                "related_concepts"] else []
+            return {
+                "prerequisites": prereqs,
+                "leads_to": leads,
+                "related_concepts": related
+            }

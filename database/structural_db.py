@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import Dict, Any, List
-from qdrant_client import QdrantClient, models # [SỬA LỖI 2]: Import thêm models
+from qdrant_client import QdrantClient, models
 from qdrant_client.models import PointStruct, VectorParams, Distance
 from fastembed import TextEmbedding
 
@@ -23,19 +23,18 @@ class QdrantVectorStore:
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE)
                 )
 
-    def upsert_section(self, section_text: str, metadata: Dict[str, Any], section_id: str):
-        """Lưu Section bằng phương pháp chuẩn (Explicit Upsert)."""
-        vector = list(self.embed_model.embed([section_text]))[0].tolist()
-        valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(section_id)))
+    def upsert_section(self, text: str, metadata: dict, parent_id: str):
+        """Lưu toàn bộ nội dung Section làm mỏ neo gốc."""
+        vector = self.embed_model.embed_query(text)
 
-        payload = {"document": section_text}
-        payload.update(metadata)
+        payload = metadata.copy()
+        payload["parent_id"] = parent_id
+        payload["type"] = "section_anchor"
+        payload["page_content"] = text
 
         self.client.upsert(
             collection_name=self.parent_coll,
-            points=[
-                PointStruct(id=valid_id, vector=vector, payload=payload)
-            ]
+            points=[PointStruct(id=parent_id, vector=vector, payload=payload)]
         )
 
     def upsert_questions(self, questions: List[str], parent_id: str, source_file: str):
@@ -87,23 +86,27 @@ class QdrantVectorStore:
         groups.sort(key=lambda x: x.get("seq_id", 0))
         return groups
 
-    def upsert_curriculum_group(self, group_data: dict, parent_id: str, target_file: str, target_section: str):
-        """Lưu từng phần giáo án (Entity Group) vào Qdrant."""
-        valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{parent_id}_group_{group_data.get('seq_id')}"))
+    def upsert_curriculum_group(self, group_data: dict, parent_id: str, source_file: str, chapter: str, section: str):
+        """
+        - Chức năng: Lưu nhóm giáo án vào Qdrant. Đã thêm trường chapter.
+        """
+        vector = self.embed_model.embed_query(group_data.get("verbatim_text", ""))
+        point_id = str(uuid.uuid4())
 
         payload = {
-            "source": target_file,
-            "section": target_section,
-            "type": "curriculum_group",  # TỪ KHÓA QUAN TRỌNG ĐỂ TÌM KIẾM
-            "curriculum_data": group_data  # Lưu toàn bộ JSON của nhóm này vào đây
+            "source": source_file,
+            "chapter": chapter,
+            "section": section,
+            "parent_id": parent_id,
+            "type": "curriculum_group",
+            "curriculum_data": group_data
         }
 
-        vector = list(self.embed_model.embed([group_data.get("group_name", "")]))[0].tolist()
-
         self.client.upsert(
-            collection_name=self.parent_coll,
-            points=[PointStruct(id=valid_id, vector=vector, payload=payload)]
+            collection_name=self.curriculum_coll,
+            points=[PointStruct(id=point_id, vector=vector, payload=payload)]
         )
+
     def get_section_exact(self, target_file: str, target_section: str) -> List[Dict[str, Any]]:
         """Dùng cho luồng LESSON_PROGRESS. Tìm trực tiếp trên Bảng Cha."""
         conditions = []

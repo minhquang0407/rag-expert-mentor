@@ -16,12 +16,12 @@ from orchestrator.langgraph_nodes import (
 class LessonOrchestrator:
     """
     - Lí do tại sao dùng: Xây dựng Đồ thị Luồng làm việc (Workflow) cho 5 Chuyên gia AI.
-    - Chức năng: Khởi tạo Nodes, nối các cạnh (Edges) thành dây chuyền, và quản lý con trỏ Cụm thực thể (Sequence Index).
+    - Chức năng: Khởi tạo Nodes, nối các cạnh (Edges) thành dây chuyền, và truyền Neo4j DB vào các Tác tử.
     """
 
-    def __init__(self, db_store, dag_store, llm_service, checkpointer=None):
+    def __init__(self, db_store, neo4j_db, llm_service, checkpointer=None):
         self.db = db_store
-        self.dag = dag_store
+        self.dag = neo4j_db
         self.llm = llm_service
         self.checkpointer = checkpointer
         self.app = self._build_graph()
@@ -29,10 +29,11 @@ class LessonOrchestrator:
     def _build_graph(self):
         workflow = StateGraph(LessonState)
 
-        workflow.add_node("planner", PlannerNode(self.db))
+        # Cấp quyền truy cập Neo4j (self.dag) cho Planner và QA
+        workflow.add_node("planner", PlannerNode(self.db, self.dag))
         workflow.add_node("qa", QARetrievalNode(self.db, self.dag, self.llm))
 
-        # Hội đồng 5 Chuyên gia
+        # Cấp quyền truy cập Neo4j cho Hội đồng 5 Chuyên gia
         workflow.add_node("concept", ConceptNode(self.llm, self.dag))
         workflow.add_node("formula", FormulaNode(self.llm, self.dag))
         workflow.add_node("math", MathNode(self.llm, self.dag))
@@ -192,8 +193,6 @@ class LessonOrchestrator:
         # app.stream sẽ trả về từng bước (event) mỗi khi một Node thực thi xong
         for event in self.app.stream(initial_state, config=config):
             for node_name, state_update in event.items():
-                # Yield (nhả) ra cho giao diện Streamlit tên của Node vừa chạy xong,
-                # và nội dung mới nhất mà Node đó vừa viết vào state (nếu có)
                 yield {
                     "node": node_name,
                     "state_update": state_update

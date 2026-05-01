@@ -4,9 +4,13 @@ import hashlib
 from database.document_processor import MathAwareDocumentProcessor
 
 
-def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
+def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, neo4j_db):
+    """
+    - Lí do tại sao dùng: Xử lý file Markdown, giải quyết lỗi "văn bản mồ côi" (orphan text) và kích hoạt kiến trúc Roadmap-Driven.
+    - Chức năng: Băm nhỏ, gom rác văn bản mồ côi vào Section đầu tiên, gửi LLM trích xuất Lộ trình và Đồ thị, sau đó lưu vào Qdrant & Neo4j.
+    """
     processor = MathAwareDocumentProcessor(max_chunk_size=1000)
-    chunks, toc_tree = processor.process_markdown(markdown_content)
+    raw_chunks, toc_tree = processor.process_markdown(markdown_content)
 
     os.makedirs("./database/tocs", exist_ok=True)
     toc_path = f"./database/tocs/{file_name}_toc.json"
@@ -15,55 +19,64 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
     print(f"[*] Đã lưu Mục lục tại {toc_path}")
 
     sections_dict = {}
-    for i, chunk in enumerate(chunks):
-        # Fallback an toàn nếu metadata không có Section
-        sec_name = chunk["metadata"].get("Section", "General")
-        if sec_name not in sections_dict: sections_dict[sec_name] = []
-        sections_dict[sec_name].append(chunk)
+    orphan_buffer = ""
 
-    print("\n[START] Pipeline Ingestion: DAG, Curriculum & QA Generation...")
+    for chunk in raw_chunks:
+        chap_name = chunk["metadata"].get("Header 1", "Default Chapter")
+        sec_name = chunk["metadata"].get("Header 2", chunk["metadata"].get("Section"))
 
-    for sec_name, chunks_list in sections_dict.items():
-        print(f"\n -> Processing: {sec_name}")
+        if chap_name and not sec_name:
+            orphan_buffer += chunk["page_content"] + "\n\n"
+            continue
+
+        if not sec_name: sec_name = "Default Section"
+        key = (chap_name, sec_name)
+
+        if key not in sections_dict:
+            sections_dict[key] = []
+            if orphan_buffer:
+                chunk["page_content"] = orphan_buffer + chunk["page_content"]
+                orphan_buffer = ""
+
+        sections_dict[key].append(chunk)
+
+    print("\n[START] Pipeline Ingestion (Roadmap-Driven GraphRAG)...")
+
+
+    for (chap_name, sec_name), chunks_list in sections_dict.items():
+        print(f"\n -> Processing: [{chap_name}] - {sec_name}")
         full_section_text = "\n\n".join([c["page_content"] for c in chunks_list])
+        parent_id = hashlib.md5(f"{file_name}_{chap_name}_{sec_name}".encode('utf-8')).hexdigest()
 
-        parent_id = hashlib.md5(f"{file_name}_{sec_name}".encode('utf-8')).hexdigest()
-
-        # =======================================================
-        # 1. GỌI HÀM LLM MỚI (SINGLE-PASS EXTRACTION)
-        # =======================================================
         llm_data = llm.extract_section_curriculum_and_dag(full_section_text)
 
-        curriculum_groups = llm_data.get("curriculum_groups", [])
+        teaching_roadmap = llm_data.get("teaching_roadmap", [])
         triplets = llm_data.get("graph_triplets", [])
 
-        # =======================================================
-        # 2. XÂY DỰNG ĐỒ THỊ DAG
-        # =======================================================
+        main_entities = set()
+        for step in teaching_roadmap:
+            main_entities.update(step.get("associated_concepts", []))
+
+        if triplets or main_entities:
+            neo4j_db.save_graph_triplets(triplets, file_name, chap_name, sec_name, list(main_entities))
+            print(f"    + Đã đẩy {len(triplets)} cạnh và đánh dấu {len(main_entities)} Concept trọng tâm vào Neo4j.")
+
+        for step in teaching_roadmap:
+            db.upsert_curriculum_group(step, parent_id, file_name, chap_name, sec_name)
+
+        print(f"    + Đã lập kế hoạch gồm {len(teaching_roadmap)} bước giảng dạy.")
+
+        questions = llm.generate_hypothetical_questions(full_section_text, num_questions=5)
+        print(f"    + Đã sinh {len(questions)} câu hỏi giả định.")
+
         section_anchors = set()
         for t in triplets:
             if "source" in t: section_anchors.add(t["source"])
             if "target" in t: section_anchors.add(t["target"])
 
-        if triplets:
-            dag.build_graph_from_triplets(triplets)
-
-        # =======================================================
-        # 3. LƯU GIÁO ÁN VÀO QDRANT
-        # =======================================================
-        for group in curriculum_groups:
-            db.upsert_curriculum_group(group, parent_id, file_name, sec_name)
-
-        print(f"    + Đã lưu {len(curriculum_groups)} Cụm thực thể (Giáo án).")
-
-        # =======================================================
-        # 4. LƯU SECTION GỐC & CÂU HỎI (DÀNH CHO LUỒNG Q&A)
-        # =======================================================
-        questions = llm.generate_hypothetical_questions(full_section_text, num_questions=5)
-        print(f"    + Đã sinh {len(questions)} câu hỏi giả định.")
-
         parent_metadata = {
             "source": file_name,
+            "chapter": chap_name,
             "section": sec_name,
             "anchor_nodes": ", ".join(list(section_anchors))
         }

@@ -1,33 +1,37 @@
-from typing import Dict, Any
+from typing import Dict, Any, List
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from .state_machine import LessonState
 from database.structural_db import QdrantVectorStore
-from database.semantic_dag import SemanticDAG
+from database.semantic_dag import Neo4jManager
 
 
 class LessonRetrievalNode:
     """Node chuyên trách việc lấy toàn bộ bài giảng (Macro-Retrieval)."""
 
-    def __init__(self, db: QdrantVectorStore, dag: SemanticDAG):
+    def __init__(self, db: QdrantVectorStore, dag: Neo4jManager):
         self.db = db
         self.dag = dag
 
     def __call__(self, state: LessonState) -> Dict[str, Any]:
+        """
+        - Lí do tại sao dùng: Nạp toàn bộ dữ liệu văn bản từ Qdrant và cấu trúc đồ thị từ Neo4j cho Section hiện tại.
+        - Chức năng: Kéo dữ liệu gốc từ DB.
+        - Cách dùng: Gọi ở pha đầu của luồng START_LESSON.
+        - Tham số: state (chứa target_file, target_section).
+        - Trả về: Cập nhật structural_context và dag_context.
+        """
         print("\n[Node: Lesson_Retrieve] Lấy toàn bộ Section bằng Qdrant Scroll API...")
 
         target_file = state.get("target_file", "")
         target_section = state.get("target_section", "")
 
-        # GỌI API SCROLL CỦA QDRANT ĐÃ ĐƯỢC ĐÓNG GÓI
         results = self.db.get_section_exact(target_file, target_section)
 
         if not results:
             return {"structural_context": "Không có thông tin trong sách.", "dag_context": ""}
 
-        # Gộp toàn bộ văn bản của Section
         chunk_text = "\n\n".join([r["page_content"] for r in results])
 
-        # Trích xuất và khử trùng lặp Anchor Nodes
         unique_anchors = set()
         for r in results:
             meta = r.get("metadata", {})
@@ -37,8 +41,14 @@ class LessonRetrievalNode:
 
         dag_context = ""
         if unique_anchors:
-            # Lội ngược dòng Đồ thị từ danh sách Siêu Đỉnh
-            dag_context = self.dag.get_backward_context(list(unique_anchors))
+            # Lấy bức tranh toàn cảnh (PDF Graph) của các siêu đỉnh
+            subgraphs = []
+            for anchor in unique_anchors:
+                sg = self.dag.get_concept_subgraph(anchor)
+                if sg["prerequisites"] or sg["leads_to"]:
+                    subgraphs.append(
+                        f"Khái niệm '{anchor}' cần học trước {sg['prerequisites']} và dẫn tới {sg['leads_to']}")
+            dag_context = "\n".join(subgraphs)
 
         return {
             "structural_context": chunk_text,
@@ -49,32 +59,26 @@ class LessonRetrievalNode:
 class QARetrievalNode:
     """Node chuyên trách việc tìm kiếm câu trả lời bằng Hybrid Search (Micro-Retrieval)."""
 
-    def __init__(self, db: QdrantVectorStore, dag: SemanticDAG, llm_service):
+    def __init__(self, db: QdrantVectorStore, dag: Neo4jManager, llm_service):
         self.db = db
         self.dag = dag
         self.llm_service = llm_service
+
     def __call__(self, state: LessonState) -> Dict[str, Any]:
         print("\n[Node: QA_Retrieve] Kích hoạt Hybrid Search (BM25 + Dense Vector)...")
 
         query = state["student_query"]
         target_file = state.get("target_file", "")
-        target_section = state.get("target_section", "")
 
-        # GỌI API HYBRID SEARCH CỦA QDRANT (Lấy Top 3 kết quả)
         results = self.db.search_candidates_and_fetch_parent(query, self.llm_service, target_file)
 
         if not results:
-            print("[-] Không tìm thấy câu hỏi giả định nào khớp ý định.")
             return {"structural_context": "Không có thông tin trong giáo trình để trả lời câu hỏi này.",
                     "dag_context": ""}
 
-        print("[+] Đã truy xuất thành công Section chứa câu trả lời!")
-
-        # Gộp 3 chunks lại để tăng độ phủ cho LLM
         chunk_text = results[0]["page_content"]
         meta = results[0].get("metadata", {})
 
-        # Trích xuất ngữ cảnh Đồ thị cho cả 3 chunks
         unique_anchors = set()
         for r in results:
             meta = r.get("metadata", {})
@@ -82,7 +86,13 @@ class QARetrievalNode:
                 anchors = [n.strip() for n in meta.get("anchor_nodes").split(",")]
                 unique_anchors.update(anchors)
 
-        dag_context = self.dag.get_backward_context(list(unique_anchors)) if unique_anchors else ""
+        dag_context = ""
+        if unique_anchors:
+            subgraphs = []
+            for anchor in unique_anchors:
+                sg = self.dag.get_concept_subgraph(anchor)
+                subgraphs.append(f"'{anchor}' cần: {sg['prerequisites']} -> Dẫn tới: {sg['leads_to']}")
+            dag_context = "\n".join(subgraphs)
 
         return {
             "structural_context": chunk_text,
@@ -91,90 +101,107 @@ class QARetrievalNode:
 
 
 class PlannerNode:
-    """
-    - Lí do tại sao dùng: Tách biệt giai đoạn "Lập kế hoạch" ra khỏi giai đoạn "Giảng bài".
-    - Chức năng: Đọc mảng `entity_groups` từ State và xuất ra một thông báo Lộ trình học tập thân thiện.
-    - Cách dùng: Được Router gọi khi `is_planning_phase == True`.
-    - Tham số: Cần truyền các phụ thuộc db (Trong phiên bản này, ta giả định dữ liệu đã được Router nạp vào State).
-    - Trả về, Kiểu trả về: Dict cập nhật state, bao gồm cờ is_planning_phase và lưu luôn vào chat_history.
-    - Các hàm thay thế nếu có: Không có.
-    """
-
-    def __init__(self, db_service):
+    def __init__(self, db_service: QdrantVectorStore, dag_service: Neo4jManager):
         self.db = db_service
+        self.dag = dag_service
 
     def __call__(self, state: dict) -> Dict[str, Any]:
-        print("\n[Node: Planner] Đang chuẩn bị Lộ trình học tập...")
-        groups = state.get("entity_groups", [])
+        """
+        - Lí do tại sao dùng: Lập lộ trình dạy dựa trên `teaching_roadmap` và chẩn đoán lỗ hổng cho TẤT CẢ các concepts sẽ xuất hiện.
+        """
+        print("\n[Node: Planner] Đang lập Lộ trình giảng dạy và chẩn đoán lỗ hổng...")
+        steps = state.get("entity_groups", [])
         section = state.get("target_section", "Chưa rõ")
 
-        if not groups:
-            err_msg = "Xin lỗi, Giáo sư không tìm thấy giáo án cho Section này. Có thể dữ liệu chưa được nạp đầy đủ."
-            return {
-                "ai_response": err_msg,
-                "chat_history": [AIMessage(content=err_msg)]
-            }
+        if not steps:
+            err_msg = "Xin lỗi, Giáo sư không tìm thấy lộ trình cho bài học này."
+            return {"ai_response": err_msg, "chat_history": [AIMessage(content=err_msg)]}
 
-        plan_text = f"Chào em! Hôm nay chúng ta sẽ chinh phục **{section}**. Để dễ hiểu nhất, Giáo sư đã chia bài này thành {len(groups)} phần trọng tâm:\n\n"
+        # Quét lỗ hổng qua toàn bộ các khái niệm trong lộ trình
+        all_unlearned = set()
+        for step in steps:
+            for concept in step.get("associated_concepts", []):
+                missing = self.dag.get_unlearned_prerequisites(concept, max_depth=2)
+                all_unlearned.update(missing)
 
-        for group in groups:
-            entities = ", ".join(group.get("core_entities", []))
-            plan_text += f"- **Phần {group.get('seq_id')}: {group.get('group_name')}** (Trọng tâm: *{entities}*)\n"
+        plan_text = f"Chào em! Hôm nay chúng ta sẽ chinh phục **{section}**. "
 
-        plan_text += "\nEm đã sẵn sàng bắt đầu Phần 1 chưa? Hãy phản hồi để chúng ta vào Checkpoint đầu tiên nhé!"
+        if all_unlearned:
+            plan_text += f"\n\n⚠️ **CHẨN ĐOÁN LỖ HỔNG:** Giáo sư nhận thấy em chưa nắm vững các kiến thức nền tảng sau: *{', '.join(all_unlearned)}*. Đừng lo, Giáo sư sẽ lồng ghép ôn tập chúng trong quá trình giảng bài nhé!\n\n"
+        else:
+            plan_text += "Rất tuyệt, nền tảng của em đang rất vững. Chúng ta sẽ vào thẳng bài học.\n\n"
+
+        plan_text += f"Lộ trình bài học của chúng ta gồm {len(steps)} bước:\n"
+
+        for step in steps:
+            concepts_str = ", ".join(step.get('associated_concepts', []))
+            plan_text += f"- **Bước {step.get('seq_id')}: {step.get('step_title')}** (Liên quan: *{concepts_str}*)\n"
+
+        plan_text += "\nEm đã sẵn sàng bắt đầu Bước 1 chưa? Hãy nhấn 'Vào học' nhé!"
 
         return {
             "ai_response": plan_text,
             "is_planning_phase": False,
             "current_seq_index": 0,
             "current_checkpoint": 1,
-            # Ghi luôn kế hoạch này vào lịch sử hội thoại để AI nhớ lộ trình
             "chat_history": [AIMessage(content=plan_text)]
         }
 
 
-from typing import Dict, Any
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-
-
 class BaseExpertNode:
-    """Base class containing shared LLM logic for the 5 Expert Agents."""
-
-    def __init__(self, llm_service, dag):
+    def __init__(self, llm_service, dag: Neo4jManager):
         self.llm = llm_service.llm
         self.dag = dag
 
     def generate_expert_content(self, state: dict, expert_role: str, specific_rule: str) -> str:
-        groups = state.get("entity_groups", [])
+        """
+        - Chức năng: Giảng dạy dựa trên 1 Bước (TeachingStep). Truyền verbatim quotes làm cốt lõi.
+        """
+        steps = state.get("entity_groups", [])
         seq_idx = state.get("current_seq_index", 0)
         language = state.get("language", "Vietnamese")
 
-        current_group = groups[seq_idx] if groups else {}
-        group_name = current_group.get("group_name", "Core Concept")
-        verbatim_context = current_group.get("verbatim_text", "")
-        core_entities = current_group.get("core_entities", [])
+        current_step = steps[seq_idx] if steps else {}
+        step_title = current_step.get("step_title", "Nội dung bài học")
+        verbatim_context = current_step.get("verbatim_exact_quotes", "")
+        associated_concepts = current_step.get("associated_concepts", [])
 
-        dag_context = self.dag.get_backward_context(
-            core_entities) if core_entities else "No prerequisite logic required."
+        # Lấy Điểm neo và Toàn cảnh Neo4j dựa trên Dàn concept của bước này
+        learned_anchors = set()
+        subgraphs = []
+        for concept in associated_concepts:
+            learned_anchors.update(self.dag.get_learned_prerequisites(concept, max_depth=3))
+            sg = self.dag.get_concept_subgraph(concept)
+            if sg["prerequisites"] or sg["leads_to"] or sg["related_concepts"]:
+                subgraphs.append(
+                    f"'{concept}' cần: {sg['prerequisites']} -> Dẫn tới: {sg['leads_to']}. Liên quan: {sg['related_concepts']}")
 
+        anchors_text = ", ".join(learned_anchors) if learned_anchors else "Không có dữ liệu cũ để liên hệ."
+        dag_context = "\n".join(subgraphs) if subgraphs else "Khái niệm độc lập."
         previous_parts = "\n\n".join(state.get("lecture_parts", []))
 
         prompt = f"""
-        You are a Professor of Mathematics and Computer Science (Expert Mentor).
-        Your teaching philosophy is "Bottom-Up" and focused on the core essence.
+        You are a Professor of Mathematics and Computer Science.
+        Your teaching philosophy is "Bottom-Up" and Constructivist.
 
-        [CURRENT TOPIC]: Teaching Entity Group: **{group_name}**
+        [CURRENT TEACHING STEP]: **{step_title}**
+        [CONCEPTS TO COVER]: {', '.join(associated_concepts)}
         [YOUR EXPERT ROLE]: {expert_role}
 
-        [CURRENT LESSON CONTEXT (STRICTLY ADHERE)]:
+        [TEXTBOOK EXACT QUOTES (STRICTLY ADHERE - DO NOT HALLUCINATE OUTSIDE OF THIS)]:
         <TEXTBOOK_CORE>
         {verbatim_context}
         </TEXTBOOK_CORE>
 
-        [PREREQUISITE FOUNDATION FROM DAG]:
-        <PREREQUISITE_LOGIC>
+        [BOOK LOGICAL FLOW (FROM NEO4J)]:
+        <LOGIC_FLOW>
         {dag_context}
-        </PREREQUISITE_LOGIC>
+        </LOGIC_FLOW>
+
+        [STUDENT'S COGNITIVE ANCHORS (WHAT THEY ALREADY KNOW)]:
+        <COGNITIVE_ANCHORS>
+        {anchors_text}
+        </COGNITIVE_ANCHORS>
 
         [PREVIOUS LECTURE PARTS BY OTHER EXPERTS]:
         <CONTEXT_CHAIN>
@@ -185,26 +212,37 @@ class BaseExpertNode:
         {specific_rule}
 
         [MANDATORY TEACHING PRINCIPLES]:
-        1. BOTTOM-UP THINKING: ALWAYS use the information in <PREREQUISITE_LOGIC> to explain <TEXTBOOK_CORE>.
-        2. ANTI-HALLUCINATION (CRITICAL): ONLY rely on the provided <TEXTBOOK_CORE>. If information is missing, reply: "I don't know, I don't have any information about that!". Do not fabricate data.
-        3. MATHEMATICS: Present mathematical formulas clearly using LaTeX (enclose in $$).
-        4. COHESION: Read the <CONTEXT_CHAIN> to ensure your explanation seamlessly continues the logical flow. Do NOT repeat what previous experts have said.
-        5. TEACHING LANGUAGE: MUST output your final content in {language}.
+        1. CONSTRUCTIVISM: You MUST use items in <COGNITIVE_ANCHORS> to create analogies.
+        2. BIG PICTURE: Use <LOGIC_FLOW> to explain *why* we are learning this.
+        3. FOCUS: Explain the [CURRENT TEACHING STEP] using the exact facts from <TEXTBOOK_CORE>. 
+        4. MATHEMATICS: Present formulas clearly using LaTeX (enclose in $$).
+        5. COHESION: Read <CONTEXT_CHAIN> and seamlessly continue the logic.
+        6. TEACHING LANGUAGE: {language}.
 
         Constraint: Return ONLY your section of the lecture. Start exactly with a Level 3 Markdown Header (###).
         """
-        response = self.llm.invoke([SystemMessage(content=prompt)])
+        response = self.llm.invoke([HumanMessage(content=prompt)])
         return response.content
-
 
 
 class ConceptNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Concept Expert] is drafting the geometric intuition...")
+
+        # Đánh dấu Đã học cho CÁC CONCEPT của bước trước
+        if state.get("action_mode") == "NEXT_GROUP":
+            prev_idx = state.get("current_seq_index", 0) - 1
+            if prev_idx >= 0:
+                steps = state.get("entity_groups", [])
+                prev_concepts = steps[prev_idx].get("associated_concepts", [])
+                for concept in prev_concepts:
+                    self.dag.mark_concept_as_learned(concept)
+                    print(f"    [*] Đã cập nhật User Graph: Đã học '{concept}'")
+
         rule = """
-        HEADER: '### 1. Geometric Intuition & Concept Essence'. 
-        TASK: Explain the core concept using real-world metaphors, geometric visualization, or physical analogies. 
-        CONSTRAINT: Do NOT use complex mathematical formulas here. Your tone should be inspiring, focusing on the "WHY" and the absolute essence of the idea.
+        HEADER: '### 1. Trực giác hình học & Bản chất'. 
+        TASK: Explain the core concepts of this step using real-world metaphors. 
+        CONSTRAINT: Do NOT use complex mathematical formulas here.
         """
         content = self.generate_expert_content(state, "Concept Intuition Expert", rule)
         return {"lecture_parts": [content]}
@@ -214,9 +252,8 @@ class FormulaNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Formula Expert] is standardizing mathematical notations...")
         rule = """
-        HEADER: '### 2. Formal Theory & Mathematical Notation'. 
+        HEADER: '### 2. Ký hiệu Toán học & Công thức'. 
         TASK: Present the formal theory and mathematical formulas. 
-        CONSTRAINT: You MUST tightly link the mathematical symbols and variables (LaTeX) to the spatial/geometric metaphors that the Concept Expert just established in the <CONTEXT_CHAIN>. Explain what each variable represents in reality.
         """
         content = self.generate_expert_content(state, "Formal Theory Expert", rule)
         return {"lecture_parts": [content]}
@@ -226,9 +263,8 @@ class MathNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Math Expert] is deriving the proofs...")
         rule = """
-        HEADER: '### 3. Mathematical Proof & Derivation'. 
-        TASK: Provide an in-depth mathematical proof or step-by-step derivation for the formulas established by the Formula Expert. 
-        CONSTRAINT: Strictly use rigorous step-by-step logic. Handle derivatives, integrals, or matrix transformations with absolute precision using LaTeX.
+        HEADER: '### 3. Chứng minh Toán học & Suy luận'. 
+        TASK: Provide an in-depth mathematical proof or step-by-step derivation based on the <TEXTBOOK_CORE>. 
         """
         content = self.generate_expert_content(state, "Mathematical Proof Expert", rule)
         return {"lecture_parts": [content]}
@@ -238,9 +274,8 @@ class AlgorithmNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Algorithm Expert] is designing computational logic...")
         rule = """
-        HEADER: '### 4. Algorithm & Computational Logic'. 
-        TASK: Translate the mathematical theory into computational logic. Provide pseudocode or explain the core data structures needed to compute this concept. 
-        CONSTRAINT: Bridge the gap between continuous mathematics and discrete computer science logic.
+        HEADER: '### 4. Thuật toán & Tư duy Máy tính'. 
+        TASK: Translate the mathematical theory into computational logic.
         """
         content = self.generate_expert_content(state, "Algorithm & Software Engineer Expert", rule)
         return {"lecture_parts": [content]}
@@ -250,14 +285,14 @@ class ExampleNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Application Expert] is finalizing the lecture...")
 
-        groups = state.get("entity_groups", [])
+        steps = state.get("entity_groups", [])
         seq_idx = state.get("current_seq_index", 0)
-        group_name = groups[seq_idx].get("group_name", "this concept") if groups else "this concept"
+        step_title = steps[seq_idx].get("step_title", "bước này") if steps else "bước này"
 
         rule = f"""
-        HEADER: '### 5. Practical Examples & Application'. 
-        TASK: Provide a concrete, solved practical example applying the theory. Provide 2 to 3 detailed examples demonstrating how the theory and mathematics from this section are applied in different scenarios.
-        CONSTRAINT: At the very end of your response, you MUST ask the student this exact question to close the lecture loop: 'Em đã hiểu hoàn toàn phần {group_name} chưa để Giáo sư chuyển sang phần tiếp theo?'
+        HEADER: '### 5. Ví dụ thực tế & Áp dụng'. 
+        TASK: Provide a concrete, solved practical example applying the theory.
+        CONSTRAINT: At the very end, ask: 'Em đã hiểu hoàn toàn nội dung **{step_title}** chưa để Giáo sư chuyển sang bước tiếp theo?'
         """
         content = self.generate_expert_content(state, "Application Expert", rule)
 
