@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
-
+from langchain_openai import ChatOpenAI
 load_dotenv()
 
 
@@ -43,19 +43,23 @@ class QuestionList(BaseModel):
 class RerankResult(BaseModel):
     best_parent_id: str
 
+class RoutingDecision(BaseModel):
+    needed_experts: List[Literal["formula", "math", "algorithm"]] = Field(
+        description="Danh sách các chuyên gia CẦN THIẾT cho đoạn văn bản này."
+    )
 
 # ==========================================
 # DỊCH VỤ LLM
 # ==========================================
 class GeminiLLMService:
-    def __init__(self, model_name: str = "gemini-2.5-flash", temperature: float = 0.1):
-        self.llm = ChatGoogleGenerativeAI(
+    def __init__(self, model_name: str = "qwen2.5:7b", temperature: float = 0.1):
+        self.llm = ChatOpenAI(
+            base_url="http://localhost:11434/v1",
+            api_key="local-key-not-needed",  # Bắt buộc điền string bất kỳ
             model=model_name,
-            temperature=temperature,
-            google_api_key=os.environ.get("LLM_API_KEY"),
-            max_output_tokens=8192
+            temperature=0.2,  # Giữ thấp để mô hình logic và bớt ảo giác
+            max_tokens=4096
         )
-
     def extract_section_curriculum_and_dag(self, section_text: str) -> Dict[str, Any]:
         """
         - Lí do tại sao dùng: Trích xuất Lộ trình giảng dạy (Teaching Roadmap) và Đồ thị (DAG) trong cùng 1 lần gọi để tối ưu API.
@@ -126,3 +130,33 @@ class GeminiLLMService:
             print(f"[!] Lỗi Rerank: {e}")
             if candidates: return candidates[0].get("parent_id", "")
             return ""
+
+    def decide_experts(self, text_context: str) -> List[str]:
+        """
+        - Lí do tại sao dùng: Làm "Nhạc trưởng" điều phối, quyết định xem bài học có đủ độ khó để gọi các chuyên gia kỹ thuật hay không.
+        - Chức năng: Đọc nội dung verbatim và phân loại (Tagging).
+        - Cách dùng: Gọi tại RouterNode ở đầu mỗi bước giảng dạy.
+        - Tham số: text_context (str) - Nội dung trích dẫn nguyên thủy của Bước hiện tại.
+        - Trả về, Kiểu trả về: List[str] - Mảng chứa tên các chuyên gia (VD: ["formula", "algorithm"]).
+        - Các hàm thay thế nếu có: Có thể dùng IF/ELSE Regex đếm số lượng dấu '$' để gọi Formula, nhưng LLM chính xác hơn về mặt ngữ nghĩa.
+        """
+        prompt = f"""
+        Nhiệm vụ: Bạn là một Điều phối viên sư phạm (Router). Đọc đoạn lý thuyết sau và quyết định xem CẦN GỌI AI để giải thích.
+
+        Các lựa chọn:
+        - "formula": Nếu văn bản có chứa nhiều ký hiệu toán học, biến số, công thức cần giải nghĩa cặn kẽ.
+        - "math": Nếu văn bản chứa các bước chứng minh, đạo hàm, tích phân, suy luận logic toán học phức tạp.
+        - "algorithm": Nếu văn bản nói về thuật toán, mã giả, đồ thị máy tính, cấu trúc dữ liệu.
+
+        Nếu văn bản chỉ là lý thuyết suông, giới thiệu hoặc định nghĩa chữ đơn giản, hãy trả về mảng rỗng [].
+
+        [VĂN BẢN]:
+        {text_context}
+        """
+        try:
+            result = self.llm.with_structured_output(RoutingDecision).invoke([HumanMessage(content=prompt)])
+            return result.needed_experts
+        except Exception as e:
+            print(f"[!] Lỗi Router, dùng Fallback: {e}")
+            return ["formula", "math", "algorithm"]
+

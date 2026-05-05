@@ -1,7 +1,9 @@
 from typing import TypedDict, List, Annotated, Dict, Any
 import operator
-
-
+from langchain_core.messages import BaseMessage
+def add_messages(left: list, right: list):
+    """Hàm hỗ trợ cộng dồn danh sách tin nhắn cho lịch sử chat."""
+    return left + right
 class LessonState(TypedDict):
     """
     - Lí do tại sao dùng: Định nghĩa cấu trúc Máy trạng thái toàn cục cho LangGraph.
@@ -29,10 +31,11 @@ class LessonState(TypedDict):
     # 3. LỊCH SỬ & ĐÁNH GIÁ (STATEFUL MEMORY)
     # ==========================================
     # Sử dụng operator.add để LangGraph tự động nối (append) tin nhắn mới thay vì ghi đè
-    chat_history: Annotated[List[Dict[str, str]], operator.add]
+    chat_history: Annotated[List[BaseMessage], add_messages]
+    lecture_parts: List[str]
 
     ai_response: str  # Câu trả lời của Giáo sư AI chuẩn bị in ra màn hình
     assessment_result: Dict[str, Any]  # Trạng thái đánh giá từ Evaluator Agent (Pass/Fail)
 
     # Thêm vào bên dưới cùng của class LessonState
-    lecture_parts: List[str]
+    routed_experts: List[str]

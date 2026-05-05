@@ -228,8 +228,6 @@ class BaseExpertNode:
 class ConceptNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Concept Expert] is drafting the geometric intuition...")
-
-        # Đánh dấu Đã học cho CÁC CONCEPT của bước trước
         if state.get("action_mode") == "NEXT_GROUP":
             prev_idx = state.get("current_seq_index", 0) - 1
             if prev_idx >= 0:
@@ -237,70 +235,86 @@ class ConceptNode(BaseExpertNode):
                 prev_concepts = steps[prev_idx].get("associated_concepts", [])
                 for concept in prev_concepts:
                     self.dag.mark_concept_as_learned(concept)
-                    print(f"    [*] Đã cập nhật User Graph: Đã học '{concept}'")
 
-        rule = """
-        HEADER: '### 1. Trực giác hình học & Bản chất'. 
-        TASK: Explain the core concepts of this step using real-world metaphors. 
-        CONSTRAINT: Do NOT use complex mathematical formulas here.
-        """
+        rule = "HEADER: '### 1. Trực giác hình học & Bản chất'. TASK: Explain the core concepts using real-world metaphors. CONSTRAINT: Do NOT use complex mathematical formulas."
         content = self.generate_expert_content(state, "Concept Intuition Expert", rule)
-        return {"lecture_parts": [content]}
+
+        existing_parts = state.get("lecture_parts", [])
+        return {"lecture_parts": existing_parts + [content]}
 
 
 class FormulaNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Formula Expert] is standardizing mathematical notations...")
-        rule = """
-        HEADER: '### 2. Ký hiệu Toán học & Công thức'. 
-        TASK: Present the formal theory and mathematical formulas. 
-        """
+        rule = "HEADER: '### 2. Ký hiệu Toán học & Công thức'. TASK: Present the formal theory and mathematical formulas."
         content = self.generate_expert_content(state, "Formal Theory Expert", rule)
-        return {"lecture_parts": [content]}
+
+        existing_parts = state.get("lecture_parts", [])
+        return {"lecture_parts": existing_parts + [content]}
 
 
 class MathNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Math Expert] is deriving the proofs...")
-        rule = """
-        HEADER: '### 3. Chứng minh Toán học & Suy luận'. 
-        TASK: Provide an in-depth mathematical proof or step-by-step derivation based on the <TEXTBOOK_CORE>. 
-        """
+        rule = "HEADER: '### 3. Chứng minh Toán học & Suy luận'. TASK: Provide an in-depth mathematical proof or step-by-step derivation."
         content = self.generate_expert_content(state, "Mathematical Proof Expert", rule)
-        return {"lecture_parts": [content]}
+
+        existing_parts = state.get("lecture_parts", [])
+        return {"lecture_parts": existing_parts + [content]}
 
 
 class AlgorithmNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Algorithm Expert] is designing computational logic...")
-        rule = """
-        HEADER: '### 4. Thuật toán & Tư duy Máy tính'. 
-        TASK: Translate the mathematical theory into computational logic.
-        """
+        rule = "HEADER: '### 4. Thuật toán & Tư duy Máy tính'. TASK: Translate the mathematical theory into computational logic."
         content = self.generate_expert_content(state, "Algorithm & Software Engineer Expert", rule)
-        return {"lecture_parts": [content]}
+
+        existing_parts = state.get("lecture_parts", [])
+        return {"lecture_parts": existing_parts + [content]}
 
 
 class ExampleNode(BaseExpertNode):
     def __call__(self, state: dict) -> Dict[str, Any]:
         print(" -> [Application Expert] is finalizing the lecture...")
-
         steps = state.get("entity_groups", [])
         seq_idx = state.get("current_seq_index", 0)
         step_title = steps[seq_idx].get("step_title", "bước này") if steps else "bước này"
 
-        rule = f"""
-        HEADER: '### 5. Ví dụ thực tế & Áp dụng'. 
-        TASK: Provide a concrete, solved practical example applying the theory.
-        CONSTRAINT: At the very end, ask: 'Em đã hiểu hoàn toàn nội dung **{step_title}** chưa để Giáo sư chuyển sang bước tiếp theo?'
-        """
+        rule = f"HEADER: '### 5. Ví dụ thực tế & Áp dụng'. TASK: Provide a practical example. CONSTRAINT: At the very end, ask: 'Em đã hiểu hoàn toàn nội dung **{step_title}** chưa để Giáo sư chuyển sang bước tiếp theo?'"
         content = self.generate_expert_content(state, "Application Expert", rule)
 
+        # Tổng hợp toàn bộ bài giảng từ mảng đã được cộng dồn chính xác
         all_parts = state.get("lecture_parts", []) + [content]
         final_lecture = "\n\n---\n\n".join(all_parts)
 
         return {
-            "lecture_parts": [content],
+            "lecture_parts": all_parts,
             "ai_response": final_lecture,
             "chat_history": [AIMessage(content=final_lecture)]
         }
+
+
+class RouterNode:
+    """Node Điều phối - Nhạc trưởng của hệ thống đa tác tử."""
+
+    def __init__(self, llm_service):
+        self.llm_service = llm_service
+
+    def __call__(self, state: dict) -> Dict[str, Any]:
+        print("\n[Node: Router] Đang điều phối chuyên gia cho bước này...")
+        steps = state.get("entity_groups", [])
+        seq_idx = state.get("current_seq_index", 0)
+
+        if not steps or seq_idx >= len(steps):
+            return {"routed_experts": ["concept", "formula", "math", "algorithm", "example"]}
+
+        current_step = steps[seq_idx]
+        verbatim_context = current_step.get("verbatim_exact_quotes", "")
+
+        chosen_experts = ["concept", "example"]
+
+        dynamic_choices = self.llm_service.decide_experts(verbatim_context)
+        chosen_experts.extend(dynamic_choices)
+
+        print(f"    + Danh sách chuyên gia được duyệt: {chosen_experts}")
+        return {"routed_experts": chosen_experts, "lecture_parts": []}

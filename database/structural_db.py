@@ -3,7 +3,8 @@ import uuid
 from typing import Dict, Any, List
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import PointStruct, VectorParams, Distance
-from fastembed import TextEmbedding
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+
 
 class QdrantVectorStore:
     def __init__(self, collection_name="math_curriculum"):
@@ -12,9 +13,15 @@ class QdrantVectorStore:
 
         self.client = QdrantClient(host="localhost", port=6333)
 
-        self.embed_model = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        self.embed_model = FastEmbedEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
 
-        self.client.set_model("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        # Chặn lỗi Qdrant không nhận dạng model (cập nhật mới nhất của thư viện)
+        try:
+            self.client.set_model("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        except Exception:
+            pass
 
         for coll in [self.parent_coll, self.child_coll]:
             if not self.client.collection_exists(coll):
@@ -30,7 +37,7 @@ class QdrantVectorStore:
         payload = metadata.copy()
         payload["parent_id"] = parent_id
         payload["type"] = "section_anchor"
-        payload["page_content"] = text
+        payload["page_content"] = text  # Đã chuẩn hóa dùng page_content
 
         self.client.upsert(
             collection_name=self.parent_coll,
@@ -42,19 +49,19 @@ class QdrantVectorStore:
         if not questions:
             return
 
-        vectors = list(self.embed_model.embed(questions))
+        vectors = list(self.embed_model.embed_documents(questions))
 
         points = []
         for idx, (q_text, vec) in enumerate(zip(questions, vectors)):
             valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{parent_id}_q_{idx}"))
 
             payload = {
-                "document": q_text,
+                "page_content": q_text,  # Đổi từ document sang page_content cho đồng bộ
                 "parent_id": parent_id,
                 "source": source_file,
                 "type": "question"
             }
-            points.append(PointStruct(id=valid_id, vector=vec.tolist(), payload=payload))
+            points.append(PointStruct(id=valid_id, vector=vec, payload=payload))
 
         self.client.upsert(
             collection_name=self.child_coll,
@@ -87,10 +94,13 @@ class QdrantVectorStore:
         return groups
 
     def upsert_curriculum_group(self, group_data: dict, parent_id: str, source_file: str, chapter: str, section: str):
-        """
-        - Chức năng: Lưu nhóm giáo án vào Qdrant. Đã thêm trường chapter.
-        """
-        vector = self.embed_model.embed_query(group_data.get("verbatim_text", ""))
+        """Lưu nhóm giáo án (Teaching Step) vào Qdrant."""
+        # VÁ LỖI 1: Lấy đúng key của Schema mới (verbatim_exact_quotes)
+        vector_text = group_data.get("verbatim_exact_quotes", "")
+        # Cứu hộ trong trường hợp LLM sinh tên cũ
+        if not vector_text: vector_text = group_data.get("verbatim_text", "")
+
+        vector = self.embed_model.embed_query(vector_text)
         point_id = str(uuid.uuid4())
 
         payload = {
@@ -102,8 +112,9 @@ class QdrantVectorStore:
             "curriculum_data": group_data
         }
 
+        # VÁ LỖI 2: Đưa vào self.parent_coll thay vì biến không tồn tại
         self.client.upsert(
-            collection_name=self.curriculum_coll,
+            collection_name=self.parent_coll,
             points=[PointStruct(id=point_id, vector=vector, payload=payload)]
         )
 
@@ -119,9 +130,11 @@ class QdrantVectorStore:
         records, _ = self.client.scroll(
             collection_name=self.parent_coll, scroll_filter=filter_query, limit=1000, with_payload=True
         )
-        return [{"page_content": r.payload.get("document", ""), "metadata": r.payload} for r in records]
+        # VÁ LỖI 3: Lấy đúng key page_content
+        return [{"page_content": r.payload.get("page_content", ""), "metadata": r.payload} for r in records]
 
-    def search_candidates_and_fetch_parent(self, query: str, llm_service, target_file: str = "") -> List[Dict[str, Any]]:
+    def search_candidates_and_fetch_parent(self, query: str, llm_service, target_file: str = "") -> List[
+        Dict[str, Any]]:
         """Tích hợp toàn bộ Luồng Option 3 + 4 cho Q&A."""
         conditions = []
         if target_file: conditions.append(
@@ -138,7 +151,9 @@ class QdrantVectorStore:
 
         if not results: return []
 
-        candidates = [{"question": r.payload.get("document", ""), "parent_id": r.payload.get("parent_id")} for r in results]
+        # VÁ LỖI 3: Lấy đúng key page_content
+        candidates = [{"question": r.payload.get("page_content", ""), "parent_id": r.payload.get("parent_id")} for r in
+                      results]
 
         best_parent_id = llm_service.rerank_candidate_questions(query, candidates)
         if not best_parent_id: return []
@@ -151,4 +166,4 @@ class QdrantVectorStore:
             with_payload=True
         )
 
-        return [{"page_content": r.payload.get("document", ""), "metadata": r.payload} for r in parent_records]
+        return [{"page_content": r.payload.get("page_content", ""), "metadata": r.payload} for r in parent_records]

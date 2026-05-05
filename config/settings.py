@@ -1,1 +1,1 @@
-LLM_MODEL_NAME = "gemini-2.5-flash"
+LLM_MODEL_NAME = "qwen3.5:9b"

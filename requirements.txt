@@ -11,3 +11,4 @@ langgraph-checkpoint-sqlite
 python-dotenv
 qdrant-client
 fastembed
+langchain-community
