@@ -1,4 +1,3 @@
-import re
 from typing import List, Dict, Any, Tuple
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 
@@ -7,40 +6,26 @@ headers_to_split_on = [
     ("##", "Section")
 ]
 
-
 class MathAwareDocumentProcessor:
-    def __init__(self, max_chunk_size: int = 1500):
-        self.max_chunk_size = max_chunk_size
-        self.math_block_pattern = re.compile(r'(\$\$[\s\S]*?\$\$)', re.MULTILINE)
-
-    def _safe_math_split(self, text_content: str) -> List[str]:
-        tokens = self.math_block_pattern.split(text_content)
-        chunks = []
-        current_chunk = ""
-        for token in tokens:
-            if not token.strip(): continue
-            if token.startswith("$$"):
-                if len(current_chunk) + len(token) > self.max_chunk_size and current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = token
-                else:
-                    current_chunk += "\n" + token
-            else:
-                paragraphs = token.split('\n\n')
-                for p in paragraphs:
-                    if not p.strip(): continue
-                    if len(current_chunk) + len(p) > self.max_chunk_size and current_chunk:
-                        chunks.append(current_chunk.strip())
-                        current_chunk = p
-                    else:
-                        current_chunk += "\n\n" + p if current_chunk else p
-        if current_chunk: chunks.append(current_chunk.strip())
-        return chunks
+    def __init__(self):
+        """
+        - Reason: Simplified document processor focusing only on Structural Parsing (TOC & Sections).
+        - Function: Initializes without max_chunk_size since we now preserve full section macro-contexts.
+        """
+        pass
 
     def process_markdown(self, markdown_text: str) -> Tuple[List[Dict[str, Any]], Dict[str, List[str]]]:
-        print("[*] Safe Chunking & TOC Extraction")
+        """
+        - Reason: To parse the structural hierarchy of the textbook without unnecessarily breaking math blocks.
+        - Function: Splits markdown by headers, builds a Table of Contents (TOC), and yields full sections.
+        - Usage: Called by the data ingestion pipeline.
+        - Parameters:
+            - markdown_text (str): The raw string content of the markdown file.
+        - Returns: A tuple containing the list of section documents and the TOC dictionary.
+        """
+        print("[*] Section-Level Structural Parsing & TOC Extraction")
         final_documents = []
-        toc = {}  # Khởi tạo Cây mục lục rỗng
+        toc = {}
 
         markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
         splits = markdown_splitter.split_text(markdown_text)
@@ -48,27 +33,25 @@ class MathAwareDocumentProcessor:
         global_seq_id = 0
 
         for split in splits:
-            # --- LOGIC RÚT TRÍCH MỤC LỤC (TOC) ---
-            chapter = split.metadata.get("Chapter")
-            section = split.metadata.get("Section")
+            # --- RÚT TRÍCH MỤC LỤC (TOC) LÝ TƯỞNG ---
+            chapter = split.metadata.get("Chapter", "General Chapter: Introduction")
+            section = split.metadata.get("Section", "General Section: Introduction")
 
-            if chapter:
-                if chapter not in toc:
-                    toc[chapter] = []
-                if section and section not in toc[chapter]:
-                    toc[chapter].append(section)
+            if chapter not in toc:
+                toc[chapter] = []
+            if section not in toc[chapter]:
+                toc[chapter].append(section)
             # -------------------------------------
 
-            safe_chunks = self._safe_math_split(split.page_content)
-            for chunk in safe_chunks:
-                meta = split.metadata.copy()
-                meta["seq_id"] = global_seq_id
-                final_documents.append({
-                    "page_content": chunk,
-                    "metadata": meta
-                })
-                global_seq_id += 1
+            meta = split.metadata.copy()
+            meta["Chapter"] = chapter
+            meta["Section"] = section
+            meta["seq_id"] = global_seq_id
+            final_documents.append({
+                "page_content": split.page_content.strip(),
+                "metadata": meta
+            })
+            global_seq_id += 1
 
-        print(f"[*] Đã tạo thành công {len(final_documents)} chunks và Cây mục lục.")
-        # Trả về 2 giá trị: Danh sách chunk và Cây mục lục (TOC)
+        print(f"[*] Đã bóc tách thành công {len(final_documents)} Sections và xây dựng Cây mục lục.")
         return final_documents, toc

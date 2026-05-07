@@ -28,19 +28,29 @@ class Neo4jManager:
         with self.driver.session() as session:
             session.run(query, user_id=user_id)
 
-    def save_graph_triplets(self, triplets: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str,
+    def save_knowledge_graph(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str,
                             main_entities: List[str]):
         """
-        - Chức năng: Lưu Graph. Tạo chuỗi định vị tuyệt đối (Absolute Locator) để tránh trùng lặp Section giữa các File.
-        - Tham số mới: Nhận thêm file_name và chapter_name.
+        - Chức năng: Lưu Graph (bao gồm Node có type và Edge có relation). Tạo chuỗi định vị tuyệt đối.
         """
-        allowed_relations = {"PREREQUISITE_OF", "RELATES_TO", "PART_OF", "DESCRIBES"}
+        allowed_relations = {"PREREQUISITE_OF", "RELATES_TO", "PART_OF", "DESCRIBES", "VERSUS"}
 
-        # Tạo chuỗi định vị tuyệt đối (Ví dụ: "a_math.md :: Chương 2 :: 2.2 Chuẩn hóa")
         locator = f"{file_name}::{chapter_name}::{section_title}"
 
         with self.driver.session() as session:
-            # 1. Cập nhật các main_entity
+            # 1. Lưu các Node và Type
+            for node in nodes:
+                node_name = str(node.get("name", "")).strip()
+                node_type = str(node.get("type", "concept")).strip()
+                if not node_name: continue
+                
+                session.run("""
+                MERGE (n:Concept {id: $id})
+                SET n.type = $type
+                SET n.source_locators = CASE WHEN $loc IN coalesce(n.source_locators, []) THEN n.source_locators ELSE coalesce(n.source_locators, []) + $loc END
+                """, id=node_name, type=node_type, loc=locator)
+
+            # 2. Đánh dấu Main Entities
             for main_ent in main_entities:
                 if not main_ent: continue
                 session.run("""
@@ -49,11 +59,11 @@ class Neo4jManager:
                 SET c.source_locators = CASE WHEN $loc IN coalesce(c.source_locators, []) THEN c.source_locators ELSE coalesce(c.source_locators, []) + $loc END
                 """, id=main_ent.strip(), loc=locator)
 
-            # 2. Xây dựng các cạnh và cập nhật micro_entities
-            for t in triplets:
-                source = str(t.get("source", "")).strip()
-                target = str(t.get("target", "")).strip()
-                raw_rel = str(t.get("relation", "RELATES_TO")).strip().upper().replace(" ", "_")
+            # 3. Xây dựng các cạnh (Edges)
+            for e in edges:
+                source = str(e.get("source", "")).strip()
+                target = str(e.get("target", "")).strip()
+                raw_rel = str(e.get("relation", "RELATES_TO")).strip().upper().replace(" ", "_")
 
                 if not source or not target: continue
                 rel = raw_rel if raw_rel in allowed_relations else "RELATES_TO"
@@ -71,7 +81,6 @@ class Neo4jManager:
                 """
                 session.run(cypher_query, source=source, target=target, rel=rel, loc=locator)
 
-    # ... (Các hàm mark_concept_as_learned, get_unlearned_prerequisites, get_learned_prerequisites, get_concept_subgraph giữ nguyên y hệt bản cũ) ...
     def mark_concept_as_learned(self, concept_id: str, user_id: str = "guest_01"):
         query = """
         MATCH (u:User {id: $user_id})
@@ -131,3 +140,40 @@ class Neo4jManager:
                 "leads_to": leads,
                 "related_concepts": related
             }
+
+    def get_graph_context(self, node_names: List[str], search_mode: str = "search") -> List[Dict[str, str]]:
+        """
+        - Reason: Dual-mode graph traversal for different cognitive tasks (Learning vs. Q&A).
+        - Function: Executes targeted Cypher queries based on the search_mode.
+        - Parameters:
+            - node_names (List[str]): The target entities to anchor the search.
+            - search_mode (str): "semi_search" for backwards 1-hop, "search" for undirected 2-hops.
+        """
+        if not node_names:
+            return []
+
+        if search_mode == "semi_search":
+            # Semi-Search: Look backwards 1 hop (incoming edges). Pattern: (m)-[r]->(n)
+            query = """
+            MATCH (m)-[r]->(n)
+            WHERE n.id IN $node_names
+            RETURN DISTINCT m.id AS source, type(r) AS relation, n.id AS target
+            """
+        else:
+            # Search: Look all directions up to 2 hops. Pattern: (n)-[*1..2]-(m)
+            # Unwind relationships to return individual edges instead of full paths
+            query = """
+            MATCH p=(n)-[*1..2]-(m)
+            WHERE n.id IN $node_names
+            UNWIND relationships(p) AS r
+            WITH DISTINCT r
+            RETURN startNode(r).id AS source, type(r) AS relation, endNode(r).id AS target
+            """
+
+        try:
+            with self.driver.session() as session:
+                results = session.run(query, node_names=node_names)
+                return [{"source": record["source"], "relation": record["relation"], "target": record["target"]} for record in results]
+        except Exception as e:
+            print(f"[!] Neo4j Query Error: {e}")
+            return []

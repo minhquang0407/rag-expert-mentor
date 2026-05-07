@@ -1,245 +1,278 @@
 import streamlit as st
-import sqlite3
 import os
 import json
 import uuid
-import sys
 import time
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
+# Lấy đường dẫn tuyệt đối của thư mục chứa file
 current_dir = Path(__file__).parent.resolve()
+import sys
+
 if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
-from langgraph.checkpoint.sqlite import SqliteSaver
 from database.structural_db import QdrantVectorStore
 from database.semantic_dag import Neo4jManager
-from orchestrator.llm_service import GeminiLLMService
-from orchestrator.graph_builder import LessonOrchestrator
+from orchestrator.llm_service import LLMService
+from runtime.queue import QueueOrchestrator
+from runtime.engine import RuntimeEngine
 from core.data_ingestion import run_ingestion_pipeline
-
-from config.settings import LLM_MODEL_NAME
 
 
 # ==========================================
-# 1. KHỞI TẠO HỆ THỐNG
+# 1. INITIALIZE CENTRAL SYSTEM
 # ==========================================
 @st.cache_resource
 def init_system():
-    db = QdrantVectorStore(collection_name="math_curriculum")
-    llm = GeminiLLMService(model_name=LLM_MODEL_NAME, temperature=0.3)
-    dag = Neo4jManager()
-    conn = sqlite3.connect("memory_checkpoint.sqlite", check_same_thread=False)
-    memory = SqliteSaver(conn)
-    orchestrator = LessonOrchestrator(db, dag, llm, checkpointer=memory)
-    return orchestrator
+    """
+    - Reason: Initialize all core services (Qdrant, Neo4j, LLM, Engine) exactly once and cache them in Streamlit to avoid reloading on every UI refresh.
+    - Function: Establish DB connections and assemble the RuntimeEngine.
+    - Usage: Called automatically when the Streamlit app starts.
+    - Parameters: None.
+    - Returns: RuntimeEngine - The central engine that coordinates all tasks.
+    - Alternatives: None.
+    """
+    db = QdrantVectorStore(collection_name="math_curriculum_v3")
+    neo4j_db = Neo4jManager()
+    llm = LLMService()
+    orchestrator = QueueOrchestrator(llm_service=llm)
+
+    engine = RuntimeEngine(orchestrator=orchestrator, vector_db=db, graph_db=neo4j_db)
+    return engine
 
 
-orchestrator = init_system()
+engine = init_system()
 
 # ==========================================
-# 2. QUẢN LÝ STATE (TRẠNG THÁI GIAO DIỆN)
+# 2. STATE MANAGEMENT (UI STATE)
 # ==========================================
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
 if "messages" not in st.session_state:
+    # Format mới: {"role": "user/assistant", "content": "...", "mode": "LEARNING/LOCAL_QA/GLOBAL_QA"}
     st.session_state.messages = []
-if "language" not in st.session_state:
-    st.session_state.language = "Tiếng Việt"
-if "input_mode" not in st.session_state:
-    st.session_state.input_mode = "LOCKED"
-
-# Thêm 2 cờ State để điều khiển 3 bước nút bấm
-if "plan_generated" not in st.session_state:
-    st.session_state.plan_generated = False
-if "lesson_started" not in st.session_state:
-    st.session_state.lesson_started = False
+if "target_file" not in st.session_state:
+    st.session_state.target_file = ""
+if "target_section" not in st.session_state:
+    st.session_state.target_section = ""
+if "entity_groups" not in st.session_state:
+    st.session_state.entity_groups = []
+if "current_seq_idx" not in st.session_state:
+    st.session_state.current_seq_idx = 0
 
 # ==========================================
-# 3. SIDEBAR - ĐIỀU HƯỚNG & NẠP DỮ LIỆU
+# 3. SIDEBAR - NAVIGATION & DATA INGESTION
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ Cài đặt hệ thống")
-    st.selectbox("🌐 Ngôn ngữ giảng dạy:", options=["English", "Tiếng Việt"], key="language")
-    st.markdown("---")
-    st.header("📂 Nạp Dữ Liệu Học Tập")
+    st.header("⚙️ System Settings")
 
-    uploaded_file = st.file_uploader("Tải lên tài liệu (.md)", type=["md"])
+    st.markdown("---")
+    st.header("📂 Ingest Learning Data")
+    uploaded_file = st.file_uploader("Upload document (.md)", type=["md"])
 
     unique_sources = []
     try:
-        records, _ = orchestrator.db.client.scroll(
-            collection_name=orchestrator.db.parent_coll, limit=500, with_payload=True, with_vectors=False
+        records, _ = engine.vector_db.client.scroll(
+            collection_name=engine.vector_db.parent_coll,
+            limit=500,
+            with_payload=True,
+            with_vectors=False
         )
         unique_sources = list(set([r.payload.get("source") for r in records if r.payload and r.payload.get("source")]))
     except Exception as e:
-        st.error(f"❌ Lỗi quét Qdrant: {e}")
+        st.error(f"❌ Error scanning Qdrant: {e}")
 
     if uploaded_file is not None:
         file_name = uploaded_file.name
         if file_name in unique_sources:
-            st.success(f"✅ '{file_name}' đã có sẵn trong CSDL.")
+            st.success(f"✅ '{file_name}' is already in the database.")
         else:
-            st.warning(f"⚠️ '{file_name}' chưa có trong CSDL.")
-            if st.button(f"📥 Bắt đầu nạp '{file_name}'", use_container_width=True):
-                with st.spinner("Đang trích xuất Khung xương và Đồ thị..."):
+            st.warning(f"⚠️ '{file_name}' is not in the database yet.")
+            if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
+                with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
                     content = uploaded_file.read().decode("utf-8")
-                    run_ingestion_pipeline(content, file_name, orchestrator.db, orchestrator.llm, orchestrator.dag)
-                    st.success("🎉 Nạp dữ liệu thành công! Đang tải lại giao diện...")
+                    run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
+                                           engine.graph_db)
+                    st.success("🎉 Data ingested successfully! Reloading interface...")
                     time.sleep(1)
                     st.rerun()
 
     st.markdown("---")
-    st.markdown(f"**Phiên học:** {st.session_state.thread_id}")
-    st.markdown("---")
-    st.header("📖 Giáo Trình Học Tập")
+    st.header("📖 Learning Curriculum")
 
     if unique_sources:
-        selected_file = st.selectbox("📚 Môn học:", options=unique_sources, key="target_file")
+        selected_file = st.selectbox("📚 Subject:", options=unique_sources, key="file_selector")
+
+        if selected_file != st.session_state.target_file:
+            st.session_state.target_file = selected_file
+            st.session_state.target_section = ""
+
         toc_path = os.path.join(current_dir, "database", "tocs", f"{selected_file}_toc.json")
 
         if os.path.exists(toc_path):
             with open(toc_path, "r", encoding="utf-8") as f:
-                try:
-                    toc_tree = json.load(f)
-                except json.JSONDecodeError:
-                    st.error("❌ File Mục lục bị lỗi định dạng JSON. Hãy nạp lại file.")
-                    toc_tree = {}
+                toc_tree = json.load(f)
 
             if toc_tree:
-                st.markdown("### 🗂️ Mục lục")
-                if "target_section" not in st.session_state:
-                    st.session_state.target_section = ""
-
+                st.markdown("### 🗂️ Table of Contents")
                 for chapter, sections in toc_tree.items():
                     with st.expander(f"📂 {chapter}"):
                         for sec in sections:
                             if st.button(f"📄 {sec}", key=f"btn_{selected_file}_{sec}"):
                                 st.session_state.target_section = sec
-                                st.session_state.messages = []
-                                st.session_state.input_mode = "LOCKED"
-                                # ĐẶT LẠI CÁC CỜ TRẠNG THÁI KHI CHUYỂN BÀI MỚI
-                                st.session_state.plan_generated = False
-                                st.session_state.lesson_started = False
+                                # Filter out old lesson messages, keep only Global QA messages
+                                st.session_state.messages = [m for m in st.session_state.messages if
+                                                             m["mode"] == "GLOBAL_QA"]
+                                st.session_state.current_seq_idx = 0
+                                st.session_state.entity_groups = engine.vector_db.get_curriculum_groups(selected_file,
+                                                                                                        sec)
                                 st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
                                 st.rerun()
 
                 if st.session_state.target_section:
-                    st.success(f"**🎯 Đang học:** {st.session_state.target_section}")
+                    st.success(f"**🎯 Currently learning:** {st.session_state.target_section}")
                 else:
-                    st.info("👈 Hãy chọn một mục để bắt đầu!")
-            else:
-                st.warning("⚠️ File Mục lục tồn tại nhưng nội dung trống rỗng.")
-        else:
-            st.error(f"⚠️ Dữ liệu Vector đã có, nhưng file JSON Mục lục bị mất tại: {toc_path}")
+                    st.info("👈 Please select a topic to begin!")
     else:
-        st.warning("CSDL đang trống. Vui lòng tải file lên.")
-
-    st.markdown("---")
-    st.header("🛠️ Công cụ Phát triển")
-    dev_mode = st.toggle("🐞 Bật Developer Mode (Streaming Log)")
+        st.warning("Database is empty. Please upload a file.")
 
 # ==========================================
-# 4. KHU VỰC HIỂN THỊ CHÍNH (MAIN CHAT)
+# 4. MAIN DISPLAY AREA & TABS
 # ==========================================
-st.title("Giáo sư AI - Chuyên gia Đa Hệ")
-st.caption("Kiến trúc Multi-Agent Pipeline: Tích hợp Vector Qdrant và GraphRAG Neo4j.")
+st.title("AI Professor - Multi-System Expert")
+st.caption("Multi-Agent Queue Architecture with Local/Global QA Routing.")
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+# Split into 2 main workspaces
+tab_learning, tab_global_qa = st.tabs(["🎓 Learning Workspace", "🌍 Global Q&A"])
 
 query_to_send = None
 action_mode_to_send = None
 
-if st.session_state.get("target_section"):
-    col1, col2 = st.columns(2)
+# ==========================================
+# WORKSPACE 1: LEARNING (LECTURE & LOCAL QA)
+# ==========================================
+with tab_learning:
+    if st.session_state.target_section and st.session_state.entity_groups:
+        st.subheader(f"📖 {st.session_state.target_section}")
 
-    with col1:
-        # LUỒNG 3 BƯỚC MỚI ĐỂ TRÁNH LỖI NHẢY CÓC INDEX
-        if not st.session_state.plan_generated:
-            if st.button("🚀 Bắt đầu lập kế hoạch", use_container_width=True):
-                query_to_send = "Hãy lập lộ trình bài học."
-                action_mode_to_send = "START_LESSON"
-                st.session_state.plan_generated = True
-                st.session_state.input_mode = "LOCKED"
-        elif not st.session_state.lesson_started:
-            if st.button("▶️ Vào học Phần 1", use_container_width=True):
-                query_to_send = "Em đã xem xong kế hoạch, sẵn sàng vào học Phần 1!"
-                action_mode_to_send = "START_PIPELINE"  # Mã lệnh mới: Ép dạy index 0, không tăng index
-                st.session_state.lesson_started = True
-                st.session_state.input_mode = "LOCKED"
-        else:
-            if st.button("✅ Đã hiểu, tiếp tục", use_container_width=True):
-                query_to_send = "Em đã hiểu phần này, sẵn sàng tiếp tục!"
-                action_mode_to_send = "NEXT_GROUP"  # Cứ nhấn nút này là Index + 1
-                st.session_state.input_mode = "LOCKED"
+        # Split into 2 sub-tabs within Learning
+        subtab_learn, subtab_local_qa = st.tabs(["📚 Lecture Progress", "💬 Lesson Q&A"])
 
-    with col2:
-        if st.session_state.input_mode == "LOCKED":
-            if st.button("❓ Mở Hỏi Đáp (Q&A)", use_container_width=True):
-                st.session_state.input_mode = "UNLOCKED"
-                st.rerun()
-        else:
-            if st.button("🔒 Đóng Hỏi Đáp", use_container_width=True):
-                st.session_state.input_mode = "LOCKED"
-                st.rerun()
+        # --- SUB-TAB: LECTURE PROGRESS ---
+        with subtab_learn:
+            # Only render messages belonging to LEARNING mode
+            for msg in st.session_state.messages:
+                if msg["mode"] == "LEARNING":
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
 
-    if st.session_state.input_mode == "UNLOCKED":
-        user_query = st.chat_input("Nhập câu hỏi tự do của bạn...")
-        if user_query:
-            query_to_send = user_query
-            action_mode_to_send = "QA"
+            is_finished = st.session_state.current_seq_idx >= len(st.session_state.entity_groups)
+            if not is_finished:
+                btn_text = "🚀 Start Lesson" if st.session_state.current_seq_idx == 0 else "✅ Understood, continue lesson"
+                if st.button(btn_text, use_container_width=True):
+                    query_to_send = "Please continue the lecture."
+                    action_mode_to_send = "LEARNING"
+            else:
+                st.success("🎉 You have completed this lesson! Please switch to another topic in the Sidebar.")
+
+        # --- SUB-TAB: LOCAL QA ---
+        with subtab_local_qa:
+            # Only render messages belonging to LOCAL_QA mode
+            for msg in st.session_state.messages:
+                if msg["mode"] == "LOCAL_QA":
+                    with st.chat_message(msg["role"]):
+                        st.markdown(msg["content"])
+
+            local_q = st.chat_input("Ask details about the current lesson...", key="input_local")
+            if local_q:
+                query_to_send = local_q
+                action_mode_to_send = "LOCAL_QA"
+
+    else:
+        st.info("👈 Please select a lesson from the Sidebar to start the Learning Workspace.")
 
 # ==========================================
-# 5. ĐỘNG CƠ THỰC THI
+# WORKSPACE 2: GLOBAL Q&A
+# ==========================================
+with tab_global_qa:
+    # Only render messages belonging to GLOBAL_QA mode
+    for msg in st.session_state.messages:
+        if msg["mode"] == "GLOBAL_QA":
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    global_q = st.chat_input("Ask any question across the entire system...", key="input_global")
+    if global_q:
+        query_to_send = global_q
+        action_mode_to_send = "GLOBAL_QA"
+
+# ==========================================
+# 5. RUNTIME EXECUTION
 # ==========================================
 if query_to_send and action_mode_to_send:
-    st.session_state.messages.append({"role": "user", "content": query_to_send})
-    with st.chat_message("user"):
-        st.markdown(query_to_send)
+    # 1. Save question to session state with Mode label
+    if action_mode_to_send != "LEARNING":  # Avoid printing "Please continue" on screen
+        st.session_state.messages.append({"role": "user", "content": query_to_send, "mode": action_mode_to_send})
 
-    with st.chat_message("assistant"):
-        if dev_mode:
-            status = st.status("🔍 Đang kích hoạt chuỗi tác tử...", expanded=True)
-            final_response = ""
+    # Show temporary spinner on UI (will disappear after rerun)
+    with st.spinner("⏳ The system is thinking and querying the Graph..."):
 
-            stream_generator = orchestrator.stream_lesson(
-                query=query_to_send, thread_id=st.session_state.thread_id,
-                target_chapter=st.session_state.target_file, target_section=st.session_state.target_section,
-                action_mode=action_mode_to_send
+        # FLOW 1: LEARNING
+        if action_mode_to_send == "LEARNING":
+            step_data = st.session_state.entity_groups[st.session_state.current_seq_idx]
+            
+            status_box = st.status("🧠 Giáo sư đang chuẩn bị bài giảng...", expanded=True)
+            
+            generator = engine.process_action(
+                action_mode="LEARNING",
+                target_file=st.session_state.target_file,
+                target_section=st.session_state.target_section,
+                step_data=step_data
+            )
+            
+            full_lecture_text = ""
+            current_text = ""
+            stream_container = None
+            
+            for event in generator:
+                if event["type"] == "status":
+                    status_box.write(f"✔️ {event['message']}")
+                    status_box.update(label=event["message"])
+                elif event["type"] == "agent_start":
+                    st.markdown(f"### 🧑🏫 [{event['agent'].upper()}]")
+                    stream_container = st.empty()
+                    current_text = ""
+                elif event["type"] == "chunk":
+                    current_text += event["content"]
+                    # Thêm ký tự block để tạo hiệu ứng gõ phím
+                    stream_container.markdown(current_text + "▌")
+                elif event["type"] == "agent_end":
+                    # Bỏ ký tự block khi gõ xong
+                    stream_container.markdown(current_text)
+                    full_lecture_text += f"### 🧑🏫 [{event['agent'].upper()}]\n{current_text}\n\n---\n\n"
+            
+            # Gập gọn hộp trạng thái sau khi xong
+            status_box.update(label="✅ Bài giảng đã hoàn tất!", state="complete", expanded=False)
+            
+            st.session_state.current_seq_idx += 1
+            st.session_state.messages.append({"role": "assistant", "content": full_lecture_text, "mode": "LEARNING"})
+
+        # FLOW 2: QA
+        else:
+            answer = engine.process_action(
+                action_mode=action_mode_to_send,
+                query=query_to_send,
+                target_file=st.session_state.target_file,
+                target_section=st.session_state.target_section
             )
 
-            for step in stream_generator:
-                node_name = step.get("node", "unknown")
-                if node_name == "system":
-                    status.write(step["message"])
-                elif node_name in ["concept", "formula", "math", "algorithm", "example"]:
-                    status.write(f"✅ **[Chuyên gia {node_name.capitalize()}]** đã hoàn tất biên soạn.")
-                    if node_name == "example":
-                        final_response = step["state_update"].get("ai_response", "")
-                elif node_name == "planner":
-                    status.write(f"✅ **[Kế hoạch sư]** đã trích xuất lộ trình.")
-                    final_response = step["state_update"].get("ai_response", "")
-                elif node_name == "finish":
-                    final_response = step["message"]
-
-            status.update(label="Hoàn tất!", state="complete", expanded=False)
-            if final_response:
-                st.markdown(final_response)
+            if answer:
+                st.session_state.messages.append({"role": "assistant", "content": answer, "mode": action_mode_to_send})
             else:
-                st.warning("Không lấy được kết quả cuối cùng.")
-        else:
-            with st.spinner("⏳ Hệ thống đang xử lý..."):
-                final_response = orchestrator.run_lesson(
-                    query=query_to_send, thread_id=st.session_state.thread_id,
-                    target_chapter=st.session_state.target_file, target_section=st.session_state.target_section,
-                    action_mode=action_mode_to_send
-                )
-                st.markdown(final_response)
+                st.error("Error: Engine did not return an answer.")
 
-    if final_response:
-        st.session_state.messages.append({"role": "assistant", "content": final_response})
+    # Automatically reload interface to show messages in the correct Tab
     st.rerun()
