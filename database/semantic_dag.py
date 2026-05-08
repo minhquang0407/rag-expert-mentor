@@ -1,17 +1,18 @@
 import os
 from neo4j import GraphDatabase
 from typing import List, Dict, Any
+from core.interfaces import IGraphStore
 
 
-class Neo4jManager:
+class Neo4jManager(IGraphStore):
     """
     - Lí do tại sao dùng: Quản lý Đồ thị Tri thức toàn cục, giải quyết triệt để lỗi ghi đè dữ liệu khi nhiều sách có cùng tên Section.
     """
 
-    def __init__(self, uri=None, user=None, password=None):
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        self.user = user or os.getenv("NEO4J_USERNAME", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD", "ExpertMentor2026")
+    def __init__(self, uri: str, user: str, password: str):
+        self.uri = uri
+        self.user = user
+        self.password = password
         try:
             self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
             self.driver.verify_connectivity()

@@ -4,13 +4,14 @@ from typing import Dict, Any, List
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import PointStruct, VectorParams, Distance
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+from core.interfaces import IVectorStore, ILLMService
 
 
 # ==========================================
 # QDRANT VECTOR STORE MANAGER
 # ==========================================
-class QdrantVectorStore:
-    def __init__(self, collection_name: str = "math_curriculum_v4"):
+class QdrantVectorStore(IVectorStore):
+    def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "math_curriculum_v4"):
         """
         - Reason: To manage vector embeddings and handle collection initialization conflicts.
         - Function: Initializes the Qdrant client, embedding model, and robustly ensures required collections exist.
@@ -24,8 +25,8 @@ class QdrantVectorStore:
         self.parent_coll = collection_name
         self.child_coll = f"{collection_name}_questions"
 
-        # Connect to local Qdrant container
-        self.client = QdrantClient(host="localhost", port=6333)
+        # Connect to Qdrant
+        self.client = QdrantClient(host=host, port=port)
 
         # Extremely fast and lightweight local embedding model
         self.embed_model = FastEmbedEmbeddings(
@@ -191,8 +192,7 @@ class QdrantVectorStore:
 
         return [{"page_content": r.payload.get("page_content", ""), "metadata": r.payload} for r in records]
 
-    def search_candidates_and_fetch_parent(self, query: str, llm_service, target_file: str = "") -> List[
-        Dict[str, Any]]:
+    def search_candidates_and_fetch_parent(self, query: str, llm_service: ILLMService, target_file: str = "") -> List[Dict[str, Any]]:
         """
         - Function: Advanced HyDE search with semantic reranking.
         """

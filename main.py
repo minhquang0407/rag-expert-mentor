@@ -14,11 +14,8 @@ import sys
 if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
-from database.structural_db import QdrantVectorStore
-from database.semantic_dag import Neo4jManager
-from orchestrator.llm_service import LLMService
-from runtime.queue import QueueOrchestrator
-from runtime.engine import RuntimeEngine
+from core.container import Container
+from config.settings import settings
 from core.data_ingestion import run_ingestion_pipeline
 
 
@@ -35,12 +32,9 @@ def init_system():
     - Returns: RuntimeEngine - The central engine that coordinates all tasks.
     - Alternatives: None.
     """
-    db = QdrantVectorStore(collection_name="math_curriculum_v3")
-    neo4j_db = Neo4jManager()
-    llm = LLMService()
-    orchestrator = QueueOrchestrator(llm_service=llm)
-
-    engine = RuntimeEngine(orchestrator=orchestrator, vector_db=db, graph_db=neo4j_db)
+    container = Container()
+    container.config.from_pydantic(settings)
+    engine = container.runtime_engine()
     return engine
 
 

@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import TeachingStep
-from config.settings import LLM_MODEL_NAME, TEMPERATURE, TOP_P
+from core.interfaces import ILLMService
+from langchain_core.language_models.chat_models import BaseChatModel
 
 # ==========================================
 # INGESTION SCHEMAS (UPDATED FOR GRAPH ONTOLOGY)
@@ -55,36 +56,13 @@ class QuestionList(BaseModel):
 # ==========================================
 # LOCAL LLM SERVICE ORCHESTRATOR
 # ==========================================
-class LLMService:
-    def __init__(self):
+class LLMService(ILLMService):
+    def __init__(self, llm: BaseChatModel, chat_llm: BaseChatModel):
         """
-        - Reason: To utilize local GPU (RTX 3060 12GB) and enforce strict JSON generation.
-        - Function: Initializes the connection to the local Qwen model via Ollama with JSON Mode enabled.
-        - Usage: Instantiated once at system startup.
-        - Parameters: None.
-        - Returns: None.
-        - Alternatives: vLLM endpoint.
+        - Function: Initializes the connection using injected LLM instances.
         """
-        self.llm = ChatOpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="not-needed",
-            model=LLM_MODEL_NAME,
-            temperature=TEMPERATURE,  # Absolute zero for deterministic output
-            top_p= TOP_P,
-            max_tokens=2048,
-            model_kwargs={
-                "response_format": {"type": "json_object"}
-            }
-        )
-
-        # [NEW]: Dedicated LLM instance for generating raw markdown (bypasses JSON restrictions)
-        self.chat_llm = ChatOpenAI(
-            base_url="http://localhost:11434/v1",
-            api_key="not-needed",
-            model=LLM_MODEL_NAME,
-            temperature=0.3,
-            max_tokens=4096
-        )
+        self.llm = llm
+        self.chat_llm = chat_llm
 
     def _extract_json_from_text(self, text: str) -> str:
         """

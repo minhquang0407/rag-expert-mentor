@@ -12,3 +12,5 @@ python-dotenv
 qdrant-client
 fastembed
 langchain-community
+pydantic-settings
+dependency-injector
