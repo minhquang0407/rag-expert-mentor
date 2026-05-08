@@ -282,6 +282,7 @@ sequenceDiagram
         Engine->>Neo4j: save_chat_turn(raw Q&A + NEXT_TURN chain)
     end
 ```
+<img width="1008" height="1041" alt="diagram-export-5-9-2026-2_28_40-AM" src="https://github.com/user-attachments/assets/6d06e2c7-5ee9-4d9d-8a35-df53b00c896a" />
 
 ### HyDE Search + LLM Reranking
 
