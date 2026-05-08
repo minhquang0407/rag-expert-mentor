@@ -45,6 +45,8 @@ engine = init_system()
 # ==========================================
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
+if "user_id" not in st.session_state:
+    st.session_state.user_id = "guest_01"
 if "messages" not in st.session_state:
     # Format mới: {"role": "user/assistant", "content": "...", "mode": "LEARNING/LOCAL_QA/GLOBAL_QA"}
     st.session_state.messages = []
@@ -56,15 +58,35 @@ if "entity_groups" not in st.session_state:
     st.session_state.entity_groups = []
 if "current_seq_idx" not in st.session_state:
     st.session_state.current_seq_idx = 0
+if "user_id" not in st.session_state:
+    # Streamlit >= 1.30 uses st.query_params
+    st.session_state.user_id = st.query_params.get("user", "guest_01")
+    st.session_state.current_loaded_section = None
 
 # ==========================================
 # 3. SIDEBAR - NAVIGATION & DATA INGESTION
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ System Settings")
+    st.header("🔐 Login")
+    user_input = st.text_input("Username (User ID):", value=st.session_state.user_id)
+
+    if user_input != st.session_state.user_id:
+        st.session_state.user_id = user_input
+        # Reload history from Neo4j when user changes
+        if user_input:
+            history = engine.graph_db.get_raw_chat_turns_by_user(user_input)
+            st.session_state.messages = []
+            for h in history:
+                st.session_state.messages.append({"role": "user", "content": h["query"], "mode": "GLOBAL_QA"})
+                st.session_state.messages.append({"role": "assistant", "content": h["answer"], "mode": "GLOBAL_QA"})
+            st.session_state.current_loaded_section = None
+            st.rerun()
 
     st.markdown("---")
-    st.header("📂 Ingest Learning Data")
+    st.header("System Settings")
+
+    st.markdown("---")
+    st.header("Ingest Learning Data")
     uploaded_file = st.file_uploader("Upload document (.md)", type=["md"])
 
     unique_sources = []
@@ -77,20 +99,20 @@ with st.sidebar:
         )
         unique_sources = list(set([r.payload.get("source") for r in records if r.payload and r.payload.get("source")]))
     except Exception as e:
-        st.error(f"❌ Error scanning Qdrant: {e}")
+        st.error(f"Error scanning Qdrant: {e}")
 
     if uploaded_file is not None:
         file_name = uploaded_file.name
         if file_name in unique_sources:
-            st.success(f"✅ '{file_name}' is already in the database.")
+            st.success(f"'{file_name}' is already in the database.")
         else:
-            st.warning(f"⚠️ '{file_name}' is not in the database yet.")
+            st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
                 with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
                     content = uploaded_file.read().decode("utf-8")
                     run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
                                            engine.graph_db)
-                    st.success("🎉 Data ingested successfully! Reloading interface...")
+                    st.success("Data ingested successfully! Reloading interface...")
                     time.sleep(1)
                     st.rerun()
 
@@ -117,9 +139,10 @@ with st.sidebar:
                         for sec in sections:
                             if st.button(f"📄 {sec}", key=f"btn_{selected_file}_{sec}"):
                                 st.session_state.target_section = sec
-                                # Filter out old lesson messages, keep only Global QA messages
-                                st.session_state.messages = [m for m in st.session_state.messages if
-                                                             m["mode"] == "GLOBAL_QA"]
+                                
+                                # [FIXED]: Don't clear messages directly. Set flag to trigger Lazy Loading from Neo4j
+                                st.session_state.current_loaded_section = None 
+                                
                                 st.session_state.current_seq_idx = 0
                                 st.session_state.entity_groups = engine.vector_db.get_curriculum_groups(selected_file,
                                                                                                         sec)
@@ -127,11 +150,63 @@ with st.sidebar:
                                 st.rerun()
 
                 if st.session_state.target_section:
-                    st.success(f"**🎯 Currently learning:** {st.session_state.target_section}")
+                    st.success(f"**Currently learning:** {st.session_state.target_section}")
                 else:
-                    st.info("👈 Please select a topic to begin!")
+                    st.info("Please select a topic to begin!")
     else:
         st.warning("Database is empty. Please upload a file.")
+
+# ==========================================
+# 3.5 LAZY LOADING FROM NEO4J (SSOT)
+# ==========================================
+def _sync_section_history():
+    """
+    - Reason: Solves Streamlit's state evaporation on tab switch or F5. Neo4j becomes the Single Source of Truth.
+    - Function: Pulls chat history from Neo4j, classifies into LEARNING and LOCAL_QA for correct tab rendering.
+      Restores the current lesson index (seq_idx).
+    - Usage: Called automatically when st.session_state.current_loaded_section changes.
+    - Parameters: None (reads directly from st.session_state).
+    - Returns: None.
+    """
+    if st.session_state.target_file and st.session_state.target_section:
+        current_section_key = f"{st.session_state.target_file}_{st.session_state.target_section}"
+        
+        # Only load if history for this section hasn't been fetched yet
+        if st.session_state.get("current_loaded_section") != current_section_key:
+            with st.spinner("Syncing learning history from Neo4j..."):
+                history = engine.graph_db.get_history_by_section(
+                    user_id=st.session_state.user_id,
+                    target_file=st.session_state.target_file,
+                    target_section=st.session_state.target_section,
+                    limit=50
+                )
+                
+                # Keep GLOBAL_QA messages (cross-section), clear old section-specific messages
+                global_msgs = [m for m in st.session_state.messages if m.get("mode") == "GLOBAL_QA"]
+                st.session_state.messages = global_msgs
+                
+                # Restore from DB
+                restored_seq_idx = 0
+                for h in history:
+                    q = h.get("query", "")
+                    a = h.get("answer", "")
+                    
+                    if q.startswith("Learn "):
+                        # This is a lecture (LEARNING)
+                        st.session_state.messages.append({"role": "assistant", "content": a, "mode": "LEARNING"})
+                        restored_seq_idx += 1
+                    else:
+                        # This is a Q&A turn (LOCAL_QA)
+                        st.session_state.messages.append({"role": "user", "content": q, "mode": "LOCAL_QA"})
+                        st.session_state.messages.append({"role": "assistant", "content": a, "mode": "LOCAL_QA"})
+                
+                # Update lesson index based on how many lectures were restored
+                if restored_seq_idx > 0:
+                    st.session_state.current_seq_idx = restored_seq_idx
+                    
+                st.session_state.current_loaded_section = current_section_key
+
+_sync_section_history()
 
 # ==========================================
 # 4. MAIN DISPLAY AREA & TABS
@@ -140,7 +215,7 @@ st.title("AI Professor - Multi-System Expert")
 st.caption("Multi-Agent Queue Architecture with Local/Global QA Routing.")
 
 # Split into 2 main workspaces
-tab_learning, tab_global_qa = st.tabs(["🎓 Learning Workspace", "🌍 Global Q&A"])
+tab_learning, tab_global_qa = st.tabs(["Learning Workspace", "Global Q&A"])
 
 query_to_send = None
 action_mode_to_send = None
@@ -150,10 +225,10 @@ action_mode_to_send = None
 # ==========================================
 with tab_learning:
     if st.session_state.target_section and st.session_state.entity_groups:
-        st.subheader(f"📖 {st.session_state.target_section}")
+        st.subheader(f"{st.session_state.target_section}")
 
         # Split into 2 sub-tabs within Learning
-        subtab_learn, subtab_local_qa = st.tabs(["📚 Lecture Progress", "💬 Lesson Q&A"])
+        subtab_learn, subtab_local_qa = st.tabs(["Lecture Progress", "Lesson Q&A"])
 
         # --- SUB-TAB: LECTURE PROGRESS ---
         with subtab_learn:
@@ -165,12 +240,12 @@ with tab_learning:
 
             is_finished = st.session_state.current_seq_idx >= len(st.session_state.entity_groups)
             if not is_finished:
-                btn_text = "🚀 Start Lesson" if st.session_state.current_seq_idx == 0 else "✅ Understood, continue lesson"
+                btn_text = "Start Lesson" if st.session_state.current_seq_idx == 0 else "Understood, continue lesson"
                 if st.button(btn_text, use_container_width=True):
                     query_to_send = "Please continue the lecture."
                     action_mode_to_send = "LEARNING"
             else:
-                st.success("🎉 You have completed this lesson! Please switch to another topic in the Sidebar.")
+                st.success("You have completed this lesson! Please switch to another topic in the Sidebar.")
 
         # --- SUB-TAB: LOCAL QA ---
         with subtab_local_qa:
@@ -218,13 +293,14 @@ if query_to_send and action_mode_to_send:
         if action_mode_to_send == "LEARNING":
             step_data = st.session_state.entity_groups[st.session_state.current_seq_idx]
             
-            status_box = st.status("🧠 Giáo sư đang chuẩn bị bài giảng...", expanded=True)
+            status_box = st.status("Preparing lesson...", expanded=True)
             
             generator = engine.process_action(
                 action_mode="LEARNING",
                 target_file=st.session_state.target_file,
                 target_section=st.session_state.target_section,
-                step_data=step_data
+                step_data=step_data,
+                user_id=st.session_state.user_id
             )
             
             full_lecture_text = ""
@@ -236,20 +312,17 @@ if query_to_send and action_mode_to_send:
                     status_box.write(f"✔️ {event['message']}")
                     status_box.update(label=event["message"])
                 elif event["type"] == "agent_start":
-                    st.markdown(f"### 🧑🏫 [{event['agent'].upper()}]")
+                    st.markdown(f"### [{event['agent'].upper()}]")
                     stream_container = st.empty()
                     current_text = ""
                 elif event["type"] == "chunk":
                     current_text += event["content"]
-                    # Thêm ký tự block để tạo hiệu ứng gõ phím
                     stream_container.markdown(current_text + "▌")
                 elif event["type"] == "agent_end":
-                    # Bỏ ký tự block khi gõ xong
                     stream_container.markdown(current_text)
-                    full_lecture_text += f"### 🧑🏫 [{event['agent'].upper()}]\n{current_text}\n\n---\n\n"
+                    full_lecture_text += f"### [{event['agent'].upper()}]\n{current_text}\n\n---\n\n"
             
-            # Gập gọn hộp trạng thái sau khi xong
-            status_box.update(label="✅ Bài giảng đã hoàn tất!", state="complete", expanded=False)
+            status_box.update(label="Lesson is completed!", state="complete", expanded=False)
             
             st.session_state.current_seq_idx += 1
             st.session_state.messages.append({"role": "assistant", "content": full_lecture_text, "mode": "LEARNING"})
@@ -260,7 +333,8 @@ if query_to_send and action_mode_to_send:
                 action_mode=action_mode_to_send,
                 query=query_to_send,
                 target_file=st.session_state.target_file,
-                target_section=st.session_state.target_section
+                target_section=st.session_state.target_section,
+                user_id=st.session_state.user_id
             )
 
             if answer:

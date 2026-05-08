@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 from typing import Dict, Any, List
 from qdrant_client import QdrantClient, models
 from qdrant_client.models import PointStruct, VectorParams, Distance
@@ -24,6 +25,7 @@ class QdrantVectorStore(IVectorStore):
         self.vector_name = "fast-paraphrase-multilingual-minilm-l12-v2"
         self.parent_coll = collection_name
         self.child_coll = f"{collection_name}_questions"
+        self.memory_coll = "user_memory_v1"
 
         # Connect to Qdrant
         self.client = QdrantClient(host=host, port=port)
@@ -39,7 +41,7 @@ class QdrantVectorStore(IVectorStore):
             pass
 
         # Robust creation of collections
-        for coll in [self.parent_coll, self.child_coll]:
+        for coll in [self.parent_coll, self.child_coll, self.memory_coll]:
             try:
                 # Check if collection is already registered in Qdrant's state
                 if not self.client.collection_exists(coll):
@@ -232,3 +234,37 @@ class QdrantVectorStore(IVectorStore):
         )
 
         return [{"page_content": r.payload.get("page_content", ""), "metadata": r.payload} for r in parent_records]
+
+    def upsert_user_memory(self, user_id: str, turn_id: str, query: str, answer: str, summary: str):
+        # Embed the summary (or query + summary) for semantic matching
+        vector = self.embed_model.embed_query(summary)
+        payload = {
+            "user_id": user_id,
+            "turn_id": turn_id,
+            "raw_query": query,
+            "raw_answer": answer,
+            "summary": summary,
+            "type": "episodic_memory",
+            "timestamp": int(time.time())
+        }
+        self.client.upsert(
+            collection_name=self.memory_coll,
+            points=[PointStruct(id=turn_id, vector={self.vector_name: vector}, payload=payload)]
+        )
+
+    def search_semantic_memory(self, user_id: str, query: str, limit: int = 5) -> List[Dict]:
+        query_vector = self.embed_model.embed_query(query)
+        # MUST filter by user_id for multi-tenant isolation
+        user_filter = models.Filter(must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))])
+        
+        response = self.client.query_points(
+            collection_name=self.memory_coll,
+            query=query_vector,
+            using=self.vector_name,
+            query_filter=user_filter,
+            limit=limit
+        )
+        
+        results = response.points
+
+        return [r.payload for r in results if hasattr(r, 'payload') and r.payload]

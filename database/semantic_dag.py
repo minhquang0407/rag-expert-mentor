@@ -178,3 +178,90 @@ class Neo4jManager(IGraphStore):
         except Exception as e:
             print(f"[!] Neo4j Query Error: {e}")
             return []
+
+
+    def get_recent_history(self, user_id: str, limit: int = 5) -> List[Dict]:
+        """Fetches the N most recent chat summaries for context window."""
+        cypher = """
+        MATCH (u:User {id: $user_id})-[:HAS_TURN]->(t:ChatTurn)
+        RETURN t.id AS id, t.raw_query AS query, t.summary AS summary
+        ORDER BY t.timestamp DESC LIMIT $limit
+        """
+        with self.driver.session() as session:
+            result = session.run(cypher, user_id=user_id, limit=limit)
+            # Reverse to chronological order (oldest to newest in the context window)
+            return [{"id": r["id"], "query": r["query"], "summary": r["summary"]} for r in result][::-1]
+
+    def get_raw_chat_turns(self, turn_ids: List[str]) -> List[Dict]:
+        """Fetches raw data when LLM Router requests it."""
+        if not turn_ids: return []
+        cypher = """
+        MATCH (t:ChatTurn) WHERE t.id IN $turn_ids
+        RETURN t.id AS id, t.raw_query AS query, t.raw_answer AS answer
+        """
+        with self.driver.session() as session:
+            result = session.run(cypher, turn_ids=turn_ids)
+            return [{"id": r["id"], "query": r["query"], "answer": r["answer"]} for r in result]
+
+    def get_raw_chat_turns_by_user(self, user_id: str) -> List[Dict]:
+        cypher = """
+        MATCH (u:User {id: $user_id})-[:HAS_TURN]->(t:ChatTurn)
+        RETURN t.id AS id, t.raw_query AS query, t.raw_answer AS answer
+        ORDER BY t.timestamp ASC
+        """
+        with self.driver.session() as session:
+            result = session.run(cypher, user_id=user_id)
+            return [{"id": r["id"], "query": r["query"], "answer": r["answer"]} for r in result]
+
+    def save_chat_turn(self, user_id: str, turn_id: str, query: str, raw_answer: str, summary: str, concept_ids: list = None, target_file: str = "", target_section: str = ""):
+        """
+        - Lí do tại sao dùng: Lưu trữ Episodic Memory vào Neo4j làm Nguồn Sự Thật Duy Nhất (SSOT).
+        - Chức năng: Lưu lượt chat, liên kết với User, NHIỀU Concept và gắn metadata Section.
+        - Cách dùng: Gọi sau khi LLM xử lý xong một lượt học/hỏi đáp.
+        """
+        cypher = """
+        MERGE (u:User {id: $user_id})
+        CREATE (t:ChatTurn {
+            id: $turn_id, 
+            raw_query: $query, 
+            raw_answer: $raw_answer, 
+            summary: $summary, 
+            file: $target_file,
+            section: $target_section,
+            timestamp: timestamp()
+        })
+        MERGE (u)-[:HAS_TURN]->(t)
+        
+        WITH t, u
+        MATCH (u)-[:HAS_TURN]->(prev:ChatTurn)
+        WHERE prev.id <> t.id
+        WITH t, prev ORDER BY prev.timestamp DESC LIMIT 1
+        MERGE (prev)-[:NEXT_TURN]->(t)
+        """
+        with self.driver.session() as session:
+            session.run(cypher, parameters={"user_id": user_id, "turn_id": turn_id, "query": query, "raw_answer": raw_answer, "summary": summary, "target_file": target_file, "target_section": target_section})
+            
+            if concept_ids:
+                link_cypher = """
+                MATCH (t:ChatTurn {id: $turn_id})
+                MERGE (c:Concept {id: $concept_id})
+                MERGE (t)-[:DISCUSSED]->(c)
+                """
+                for cid in concept_ids:
+                    if cid and str(cid).strip():
+                        session.run(link_cypher, turn_id=turn_id, concept_id=str(cid).strip())
+
+    def get_history_by_section(self, user_id: str, target_file: str, target_section: str, limit: int = 50) -> List[
+        Dict]:
+
+        cypher = """
+        MATCH (u:User {id: $user_id})-[:HAS_TURN]->(t:ChatTurn)
+        WHERE t.file = $target_file AND t.section = $target_section
+        RETURN t.raw_query AS query, t.raw_answer AS answer
+        ORDER BY t.timestamp DESC LIMIT $limit
+        """
+        with self.driver.session() as session:
+            result = session.run(cypher, user_id=user_id, target_file=target_file, target_section=target_section,
+                                 limit=limit)
+            # Reverse list to render oldest top, newest bottom
+            return [{"query": r["query"], "answer": r["answer"]} for r in result][::-1]

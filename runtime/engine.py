@@ -4,28 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
 from core.schemas import QAResponse
 
-class MemoryManager:
-    def __init__(self, max_history: int = 5):
-        """
-        - Reason: To maintain a rolling window of conversation history across all states.
-        - Function: Stores and summarizes recent interactions to prevent prompt context overflow.
-        - Usage: Instantiated inside RuntimeEngine.
-        - Parameters: max_history (int) - Number of recent QA pairs to keep.
-        - Returns: None
-        - Alternatives: Advanced ViT Image memory rendering (Placeholder for future).
-        """
-        self.history = []
-        self.max_history = max_history
-
-    def add_interaction(self, role: str, content: str):
-        self.history.append({"role": role, "content": content})
-        if len(self.history) > self.max_history * 2: # Keep last N pairs
-            self.history = self.history[-(self.max_history * 2):]
-
-    def get_history_string(self) -> str:
-        if not self.history:
-            return "No previous interaction in this session."
-        return "\n".join([f"{item['role'].capitalize()}: {item['content']}" for item in self.history])
+import uuid
 
 class SupportAgent:
     def __init__(self, llm: BaseChatModel):
@@ -36,53 +15,67 @@ class SupportAgent:
         """
         self.llm = llm
 
-    def generate_answer(self, query: str, chat_history: str, graph_context: List[Dict], macro_context: str = "") -> str:
-        """
-        - Reason: Core logic for QA synthesis.
-        - Function: Formats the Socratic prompt and invokes the LLM. Fallbacks gracefully if graph_context is empty.
-        - Parameters:
-            - query (str): User's question.
-            - chat_history (str): Stringified recent memory.
-            - graph_context (List): Data from Neo4j.
-            - macro_context (str): Optional full section text (usually for GLOBAL_QA).
-        - Returns: String answer.
-        """
-        system_prompt = """
-                You are an Expert Academic Mentor. Answer the student's question directly, accurately, and pedagogically.
+    def summarize_turn(self, query: str, answer: str) -> str:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", 'You are an expert technical summarizer. Summarize the following Q&A by extracting the core concepts and key technical details into 2-3 concise bullet points. You MUST output strictly valid JSON in this exact format: {{"summary": "- Bullet 1\\n- Bullet 2\\n- Bullet 3"}}'),
+            ("human", "Query: {query}\nAnswer: {answer}")
+        ])
+        try:
+            response = self.llm.invoke(prompt.format_messages(query=query, answer=answer))
+            text = response.content
+            # Try to parse JSON and extract 'summary'
+            try:
+                data = json.loads(text)
+                if "summary" in data:
+                    return str(data["summary"])
+                elif "action" in data:
+                    return str(data)
+                return str(data)
+            except json.JSONDecodeError:
+                return text
+        except Exception as e:
+            return f"Summary unavailable: {e}"
 
-                [STRICT RULES - ANTI-HALLUCINATION]:
-                1. GROUNDING RULE: You MUST construct your answer using ONLY the facts provided in [MACRO TEXT CONTEXT] and [GRAPH CONTEXT].
-                2. OUT OF CONTEXT RULE: If the student's question asks for concepts or facts NOT present in the provided contexts, you MUST decline to answer by stating exactly: "Xin lỗi, tài liệu bài học hiện tại không đề cập đến thông tin này." DO NOT use your internal pre-trained knowledge to answer out-of-scope questions.
-                3. If [GRAPH CONTEXT] is provided, use the entities and relationships to explain the underlying logic.
-                4. If both contexts are EMPTY, rely purely on [CHAT HISTORY] to clarify or re-explain previous points. Do not introduce new external facts.
-                5. Output strictly valid JSON.
-                """
+    def route_and_answer(self, query: str, semantic_memory: list, recent_history: list, graph_context: list = None, macro_context: str = "", raw_details: list = None) -> dict:
+        system_prompt = """
+        You are an Expert Academic Mentor. 
+        You have access to [SEMANTIC MEMORY] (related past Q&A summaries) and [RECENT HISTORY] (latest chat context).
+        If you need the exact full-text details of a past conversation to answer, return:
+        {{"action": "fetch_raw", "turn_ids": ["turn_id_1", ...]}}
+        
+        Otherwise, answer the question using the available context. Output strictly valid JSON:
+        {{"action": "answer", "response": "Your detailed explanation..."}}
+        """
 
         human_prompt = """
-                [CHAT HISTORY]:
-                {chat_history}
+        [SEMANTIC MEMORY (Qdrant)]:
+        {semantic_memory}
 
-                [GRAPH CONTEXT]:
-                {graph_context}
+        [RECENT HISTORY (Neo4j)]:
+        {recent_history}
+        
+        [RAW DETAILS FETCHED]:
+        {raw_details}
 
-                [MACRO TEXT CONTEXT]:
-                {macro_context}
+        [GRAPH CONTEXT]:
+        {graph_context}
 
-                [STUDENT QUESTION]:
-                {query}
+        [MACRO TEXT CONTEXT]:
+        {macro_context}
 
-                [REQUIRED JSON FORMAT]:
-                {{
-                    "answer": "Your detailed explanation based STRICTLY on the context, or the exact refusal message if out of scope."
-                }}
-                """
+        [STUDENT QUESTION]:
+        {query}
+        """
+        
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
             ("human", human_prompt)
         ])
 
         _input = prompt.format_messages(
-            chat_history=chat_history,
+            semantic_memory=json.dumps(semantic_memory, ensure_ascii=False) if semantic_memory else "EMPTY",
+            recent_history=json.dumps(recent_history, ensure_ascii=False) if recent_history else "EMPTY",
+            raw_details=json.dumps(raw_details, ensure_ascii=False) if raw_details else "NONE",
             graph_context=json.dumps(graph_context, ensure_ascii=False) if graph_context else "EMPTY",
             macro_context=macro_context if macro_context else "EMPTY",
             query=query
@@ -90,15 +83,29 @@ class SupportAgent:
 
         try:
             response = self.llm.invoke(_input)
-            # Basic JSON extraction (assuming robust output or using the helper from LocalLLMService)
             start = response.content.find('{')
             end = response.content.rfind('}')
             clean_json = response.content[start:end+1]
-            data = json.loads(clean_json)
-            return data.get("answer", "I apologize, but I encountered an error processing the answer.")
+            parsed = json.loads(clean_json)
+            
+            # Normalize: LLM may use 'answer', 'text', or 'content' instead of 'response'
+            if "response" not in parsed and parsed.get("action") != "fetch_raw":
+                for alt_key in ["answer", "text", "content", "reply"]:
+                    if alt_key in parsed:
+                        parsed["response"] = parsed.pop(alt_key)
+                        break
+                else:
+                    # If no known key found, use the entire raw LLM output as the response
+                    non_action_values = [v for k, v in parsed.items() if k != "action" and isinstance(v, str)]
+                    if non_action_values:
+                        parsed["response"] = non_action_values[0]
+            
+            return parsed
         except Exception as e:
             print(f"[!] SupportAgent Error: {e}")
-            return "I am currently unable to process your request."
+            # Fallback: return the raw LLM text as the answer if JSON parsing fails entirely
+            raw_text = response.content if 'response' in dir() else "I am currently unable to process your request."
+            return {"action": "answer", "response": raw_text}
 
 class RuntimeEngine:
     def __init__(self, orchestrator, vector_db, graph_db, support_agent):
@@ -111,11 +118,40 @@ class RuntimeEngine:
         self.orchestrator = orchestrator
         self.vector_db = vector_db
         self.graph_db = graph_db
-        self.memory = MemoryManager()
         self.support_agent = support_agent
 
-    def _stream_learning_action(self, target_file: str, target_section: str, step_data: dict):
-        yield {"type": "status", "message": "🔍 Đang trích xuất Macro-context từ bài học..."}
+    def save_learning_turn(self, user_id: str, target_file: str, target_section: str, step_data: dict, full_lecture_text: str):
+        """
+        - Reason: Decouples lecture persistence logic from the UI streaming flow.
+        - Function: Assigns a static summary, saves raw text to Qdrant, and links all entities in Neo4j.
+        """
+        turn_id = str(uuid.uuid4())
+        seq_id = step_data.get("seq_id", 0)
+        
+        # 1. Format the raw query identifier
+        raw_query = f"Learn {target_section}_{seq_id}"
+        
+        # 2. Static summary (saves LLM tokens by avoiding a summarize call)
+        summary = f"[LECTURE] System completed teaching: {target_section} (Step {seq_id})"
+        
+        # 3. Save to Qdrant (full lecture text)
+        self.vector_db.upsert_user_memory(user_id, turn_id, raw_query, full_lecture_text, summary)
+        
+        # 4. Save to Neo4j (link ALL main_entities)
+        main_entities = step_data.get("main_entities", [])
+        self.graph_db.save_chat_turn(
+            user_id=user_id,
+            turn_id=turn_id,
+            query=raw_query,
+            raw_answer=full_lecture_text,
+            summary=summary,
+            concept_ids=main_entities,
+            target_file=target_file,
+            target_section=target_section
+        )
+
+    def _stream_learning_action(self, target_file: str, target_section: str, step_data: dict, user_id: str):
+        yield {"type": "status", "message": "Extracting Macro-context from the lesson..."}
         raw_context = self.vector_db.get_section_exact(target_file, target_section)
 
         macro_context_str = ""
@@ -125,7 +161,7 @@ class RuntimeEngine:
         elif isinstance(raw_context, str):
             macro_context_str = raw_context
 
-        yield {"type": "status", "message": "🕸️ Đang quét Đồ thị User Profile (Learned/Unlearned) từ Neo4j..."}
+        yield {"type": "status", "message": "Scanning User Profile Graph (Learned/Unlearned) from Neo4j..."}
         main_entities = step_data.get("main_entities", [])
         unlearned, learned = [], []
         if main_entities:
@@ -136,62 +172,44 @@ class RuntimeEngine:
         
         graph_context_str = f"Unlearned: {', '.join(unlearned) if unlearned else 'None'}\nLearned: {', '.join(learned) if learned else 'None'}"
 
-        yield from self.orchestrator.execute_teaching_step(step_data, macro_context_str, graph_context_str)
+        # [FIXED]: Accumulate chunks to build the full text before saving
+        full_lecture_text = ""
+        for event in self.orchestrator.execute_teaching_step(step_data, macro_context_str, graph_context_str):
+            if event["type"] == "chunk":
+                full_lecture_text += event["content"]
+            elif event["type"] == "agent_end":
+                # Add formatting separators to match UI display
+                full_lecture_text += f"\n\n---\n\n"
+            
+            # Yield the event forward to the UI
+            yield event
 
-        yield {"type": "status", "message": "💾 Đang lưu tiến độ học vào User Profile Neo4j..."}
+        # [FIXED]: Call the dedicated save logic with the fully accumulated text
+        yield {"type": "status", "message": "Saving lecture to Neo4j and Qdrant..."}
+        self.save_learning_turn(user_id, target_file, target_section, step_data, full_lecture_text)
+
+        yield {"type": "status", "message": "Marking learning progress in User Profile..."}
         if main_entities:
             for ent in main_entities:
-                self.graph_db.mark_concept_as_learned(ent)
+                self.graph_db.mark_concept_as_learned(ent, user_id=user_id)
 
-    def process_action(self, action_mode: str, query: str = "", target_file: str = "", target_section: str = "", step_data: dict = None):
+    def process_action(self, action_mode: str, query: str = "", target_file: str = "", target_section: str = "", step_data: dict = None, user_id: str = "guest_01"):
         """
         - Reason: Unified entry point for all UI interactions.
         - Function: Executes the distinct logic flows for LEARNING, LOCAL_QA, and GLOBAL_QA.
-        - Parameters:
-            - action_mode (str): "LEARNING", "LOCAL_QA", or "GLOBAL_QA".
-            - query (str): User input (for QA).
-            - target_file/target_section: Metadata for context routing.
-            - step_data: Data for the QueueOrchestrator (Learning only).
         """
         if action_mode == "LEARNING":
             print("\n[ENGINE] Dispatching to LEARNING Queue (Streaming)...")
-            # Trả về Generator object thay vì yield trực tiếp trong hàm này
-            return self._stream_learning_action(target_file, target_section, step_data)
+            return self._stream_learning_action(target_file, target_section, step_data, user_id)
 
-        elif action_mode == "LOCAL_QA":
-            print(f"\n[ENGINE] Executing LOCAL QA for query: {query}")
-            self.memory.add_interaction("user", query)
+        elif action_mode in ["LOCAL_QA", "GLOBAL_QA"]:
+            print(f"\n[ENGINE] Executing {action_mode} for query: {query}")
+            
+            # 1. Fetch Hybrid Memory
+            semantic_mem = self.vector_db.search_semantic_memory(user_id, query, limit=5)
+            recent_mem = self.graph_db.get_recent_history(user_id, limit=5)
 
-            # 1. Fallback mechanism: Find anchor entities using existing HyDE search
-            anchor_nodes = []
-            search_results = self.vector_db.search_candidates_and_fetch_parent(
-                query=query,
-                llm_service=self.orchestrator.llm_service,
-                target_file=target_file
-            )
-
-            if search_results and "metadata" in search_results[0]:
-                raw_anchors = search_results[0]["metadata"].get("anchor_nodes", "")
-                if raw_anchors:
-                    anchor_nodes = [node.strip() for node in raw_anchors.split(",") if node.strip()]
-
-            # 2. Neo4j Semi-Search (backwards 1 hop)
-            graph_data = self.graph_db.get_graph_context(anchor_nodes, search_mode="semi_search") if anchor_nodes else []
-
-            # 3. Generate Answer
-            answer = self.support_agent.generate_answer(
-                query=query,
-                chat_history=self.memory.get_history_string(),
-                graph_context=graph_data
-            )
-            self.memory.add_interaction("assistant", answer)
-            return answer
-
-        elif action_mode == "GLOBAL_QA":
-            print(f"\n[ENGINE] Executing GLOBAL QA for query: {query}")
-            self.memory.add_interaction("user", query)
-
-            # 1. Search Anchor using existing HyDE search
+            # 2. Search Anchor using existing HyDE search
             anchor_nodes = []
             macro_context = ""
             search_results = self.vector_db.search_candidates_and_fetch_parent(
@@ -202,19 +220,53 @@ class RuntimeEngine:
 
             if search_results:
                 macro_context = search_results[0].get("page_content", "")
-                raw_anchors = search_results[0].get("metadata", {}).get("anchor_nodes", "")
-                if raw_anchors:
-                    anchor_nodes = [node.strip() for node in raw_anchors.split(",") if node.strip()]
+                if "metadata" in search_results[0]:
+                    raw_anchors = search_results[0]["metadata"].get("anchor_nodes", "")
+                    if raw_anchors:
+                        anchor_nodes = [node.strip() for node in raw_anchors.split(",") if node.strip()]
 
-            # 2. Neo4j Search (2 hops undirected)
-            graph_data = self.graph_db.get_graph_context(anchor_nodes, search_mode="search") if anchor_nodes else []
+            # 3. Neo4j Search
+            search_mode = "search" if action_mode == "GLOBAL_QA" else "semi_search"
+            graph_data = self.graph_db.get_graph_context(anchor_nodes, search_mode=search_mode) if anchor_nodes else []
 
-            # 4. Generate Answer
-            answer = self.support_agent.generate_answer(
-                query=query,
-                chat_history=self.memory.get_history_string(),
-                graph_context=graph_data,
+            # 4. Hybrid Routing Phase 1
+            route_res = self.support_agent.route_and_answer(
+                query=query, 
+                semantic_memory=semantic_mem, 
+                recent_history=recent_mem, 
+                graph_context=graph_data, 
                 macro_context=macro_context
             )
-            self.memory.add_interaction("assistant", answer)
+
+            if route_res.get("action") == "fetch_raw":
+                print(f"[*] Agent requested raw history for turns: {route_res.get('turn_ids')}")
+                raw_details = self.graph_db.get_raw_chat_turns(route_res.get("turn_ids", []))
+                # Hybrid Routing Phase 2 (with raw data)
+                route_res = self.support_agent.route_and_answer(
+                    query=query, 
+                    semantic_memory=semantic_mem, 
+                    recent_history=recent_mem, 
+                    graph_context=graph_data, 
+                    macro_context=macro_context,
+                    raw_details=raw_details
+                )
+
+            answer = route_res.get("response", "No answer generated.")
+
+            # 5. Summarize and Save Memory
+            turn_id = str(uuid.uuid4())
+            summary = self.support_agent.summarize_turn(query, answer)
+
+            self.vector_db.upsert_user_memory(user_id, turn_id, query, answer, summary)
+            self.graph_db.save_chat_turn(
+                user_id=user_id,
+                turn_id=turn_id,
+                query=query,
+                raw_answer=answer,
+                summary=summary,
+                concept_ids=list(anchor_nodes) if anchor_nodes else [],
+                target_file=target_file,
+                target_section=target_section
+            )
+
             return answer

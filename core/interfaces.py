@@ -44,6 +44,14 @@ class IVectorStore(ABC):
     def search_candidates_and_fetch_parent(self, query: str, llm_service: ILLMService, target_file: str = "") -> List[Dict[str, Any]]:
         pass
 
+    @abstractmethod
+    def upsert_user_memory(self, user_id: str, turn_id: str, query: str, answer: str, summary: str):
+        pass
+
+    @abstractmethod
+    def search_semantic_memory(self, user_id: str, query: str, limit: int = 5) -> List[Dict]:
+        pass
+
 
 class IGraphStore(ABC):
     """Interface cho Cơ sở dữ liệu Đồ thị."""
@@ -70,4 +78,20 @@ class IGraphStore(ABC):
 
     @abstractmethod
     def get_graph_context(self, node_names: List[str], search_mode: str = "search") -> List[Dict[str, str]]:
+        pass
+
+    @abstractmethod
+    def save_chat_turn(self, user_id: str, turn_id: str, query: str, raw_answer: str, summary: str, concept_ids: list = None, target_file: str = "", target_section: str = ""):
+        pass
+
+    @abstractmethod
+    def get_recent_history(self, user_id: str, limit: int = 5) -> List[Dict]:
+        pass
+
+    @abstractmethod
+    def get_raw_chat_turns(self, turn_ids: List[str]) -> List[Dict]:
+        pass
+
+    @abstractmethod
+    def get_raw_chat_turns_by_user(self, user_id: str) -> List[Dict]:
         pass
