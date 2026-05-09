@@ -140,7 +140,7 @@ The Learning flow delivers **structured, sequential lectures** using a pre-compi
 
 ---
 
-## 🔍 QA Architecture (LOCAL_QA & GLOBAL_QA)
+## QA Architecture (LOCAL_QA & GLOBAL_QA)
 
 The QA system implements the **Dual Engine** described in [Standout Features](#-standout-features): **Reverse BFS** for LocalQA and **Full Vector Search** for GlobalQA, both backed by Hybrid Memory Retrieval + Self-Routing.
 
@@ -155,40 +155,7 @@ The QA system implements the **Dual Engine** described in [Standout Features](#-
 
 ### QA Flow (Both Modes)
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Engine as RuntimeEngine
-    participant Qdrant
-    participant Neo4j
-    participant Agent as SupportAgent (Router)
 
-    User->>Engine: process_action(GLOBAL_QA, query)
-    
-    par Hybrid Memory Retrieval
-        Engine->>Qdrant: search_semantic_memory(user, query)
-        Engine->>Neo4j: get_recent_history(user)
-    end
-    
-    Engine->>Qdrant: search_candidates_and_fetch_parent(query) → HyDE + Rerank
-    Engine->>Neo4j: get_graph_context(anchor_nodes, "search") → 2-hop
-    
-    Engine->>Agent: route_and_answer(query, semantic_mem, recent_hist, graph_ctx)
-    
-    alt LLM returns fetch_raw
-        Agent-->>Engine: {"action": "fetch_raw", "turn_ids": [...]}
-        Engine->>Neo4j: get_raw_chat_turns(turn_ids)
-        Engine->>Agent: route_and_answer(..., raw_details=raw_data)
-    end
-    
-    Agent-->>Engine: {"action": "answer", "response": "..."}
-    
-    par Save to Hybrid Memory
-        Engine->>Agent: summarize_turn(query, answer) → bullet summary
-        Engine->>Qdrant: upsert_user_memory(summary vector)
-        Engine->>Neo4j: save_chat_turn(raw Q&A + NEXT_TURN chain)
-    end
-```
 <img width="1008" height="1041" alt="diagram-export-5-9-2026-2_28_40-AM" src="https://github.com/user-attachments/assets/6d06e2c7-5ee9-4d9d-8a35-df53b00c896a" />
 
 ### HyDE Search + LLM Reranking
