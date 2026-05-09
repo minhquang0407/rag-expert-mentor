@@ -1,0 +1,254 @@
+{
+    "questions": [
+        {
+            "question": "When is an application considered 'data-intensive'?",
+            "ground_truth": "An application is data-intensive if data management—such as storing, processing large data volumes, managing changes, and ensuring consistency and high availability—is the primary challenge, rather than parallelizing computationally complex tasks.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the primary difference between operational (OLTP) and analytical (OLAP) systems?",
+            "ground_truth": "Operational systems handle online transaction processing (OLTP), focusing on low-latency point queries and updates by end users. Analytical systems (OLAP) contain read-only copies of data and are optimized for scanning huge numbers of records to calculate aggregate statistics for business intelligence.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why is it generally undesirable for business analysts to directly query OLTP systems?",
+            "ground_truth": "Directly querying OLTP systems is problematic because the data is often spread across silos, OLTP schemas are poorly suited for analytics, expensive queries can degrade performance for end users, and direct access might be blocked by security or compliance barriers.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What does the ETL process involve in the context of a data warehouse?",
+            "ground_truth": "ETL stands for Extract-Transform-Load. It involves extracting data from various operational databases, transforming it into an analysis-friendly schema while cleaning it up, and finally loading it into the data warehouse.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How does a data lake differ from a data warehouse regarding data structure?",
+            "ground_truth": "A data warehouse typically uses a relational data model structured for SQL queries, whereas a data lake is a centralized repository that stores files in their raw form without imposing any particular file format, data model, or schema.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the difference between a 'system of record' and a 'derived data system'?",
+            "ground_truth": "A system of record holds the authoritative, canonical version of data where new inputs are first written. A derived data system holds redundant data created by transforming existing data from another system (like caches, indexes, or materialized views) to improve read query performance.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What are the main advantages of adopting a cloud native system architecture?",
+            "ground_truth": "Cloud native systems offer better performance on identical hardware, faster recovery from failures, the ability to rapidly scale computing resources to match varying load demands, and the capacity to support massive datasets by leveraging low-level cloud abstractions.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What does 'disaggregation' mean in cloud native systems?",
+            "ground_truth": "Disaggregation refers to the separation of storage and computation responsibilities. Unlike traditional servers where both exist on one machine, cloud native systems typically store data in dedicated services (like S3) and transfer it over the network to separate compute instances for processing.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why might an organization choose to perform tasks on a single node rather than a distributed system?",
+            "ground_truth": "Single-node systems avoid the complexities of distributed systems, such as network failures, slow network calls, observability challenges, and cross-service data consistency issues. For many workloads, a single powerful machine is faster, cheaper, and simpler to manage.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the principle of 'data minimization' and how does it conflict with big data philosophies?",
+            "ground_truth": "Data minimization dictates that personal data should only be collected for a specific purpose and not kept longer than necessary. This contradicts the big data philosophy of storing vast amounts of data speculatively, helping organizations reduce legal liability, storage costs, and reputational risks under laws like the GDPR.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the distinction between the roles of data engineers and analytics engineers?",
+            "ground_truth": "Data engineers focus on integrating operational and analytical systems and managing the overall data infrastructure. Analytics engineers, on the other hand, focus on modeling and transforming data to make it useful and accessible for business analysts and data scientists.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the purpose of a Hybrid Transactional/Analytical Processing (HTAP) system?",
+            "ground_truth": "HTAP systems aim to support both online transaction processing (OLTP) workloads and analytical (OLAP) workloads within a single system, thereby eliminating the need for ETL processes to move data from operational to analytical databases.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why do data scientists often avoid working directly within relational data warehouses?",
+            "ground_truth": "Data scientists often perform tasks like feature engineering for machine learning or natural language processing on unstructured data. These complex transformations are difficult to express in traditional SQL, leading them to prefer data lakes and tools like Python or Spark.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What does the 'sushi principle' signify in data analytics?",
+            "ground_truth": "The 'sushi principle' stands for 'raw data is better.' It advocates for keeping data in its raw, unprocessed form within a data lake, allowing different consumers to apply their own specific transformations based on their unique needs.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How is 'reverse ETL' utilized in modern data architectures?",
+            "ground_truth": "Reverse ETL is used to take the insights or outputs generated by analytical systems (such as a trained machine learning model for product recommendations) and push them back into operational systems so they can directly interact with and serve end users.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "When might self-hosting a data system be more cost-effective than using cloud services?",
+            "ground_truth": "Self-hosting can be cheaper if the organization already has the technical expertise to operate the systems and if the system's workload is highly predictable, meaning there are no wild fluctuations that would require the elasticity of the cloud.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the primary risk associated with vendor lock-in in cloud services?",
+            "ground_truth": "Vendor lock-in means an organization becomes dependent on a specific cloud provider's proprietary APIs and technologies. If the provider shuts down, changes the product, or raises prices, the cost and effort to migrate to a different service are exceedingly high.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why are virtual disks (block devices) less optimal for cloud native architectures?",
+            "ground_truth": "Virtual disks emulate physical drives over a network, meaning every I/O operation is a network call. This introduces performance overhead and makes the database highly sensitive to network glitches, which is why cloud native systems prefer object storage like S3.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How does the serverless (FaaS) computing model differ from using virtual machines?",
+            "ground_truth": "With virtual machines, developers must explicitly provision, start, and shut down instances, paying for capacity. In the serverless model, the cloud provider automatically allocates and frees resources based on incoming requests, charging strictly for the time the code is executing.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How does fault tolerance in High-Performance Computing (HPC) differ from cloud computing?",
+            "ground_truth": "In HPC, if a node fails, the standard procedure is often to stop the entire cluster, repair the node, and restart from the last checkpoint. In cloud computing, stopping the cluster is not viable because services must remain highly available to users without interruption.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What are the common building blocks used to create data-intensive applications?",
+            "ground_truth": "Common building blocks include databases to store and retrieve data, caches to remember expensive operations, search indexes for keyword filtering, stream processing for immediate event handling, and batch processing to crunch accumulated data.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How does data management differ between an application's frontend and backend?",
+            "ground_truth": "The frontend typically manages data locally for a single user on their specific device, whereas the backend faces the much larger challenge of managing, storing, and processing data on behalf of all the users in the system.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How is a 'transaction' generally defined in the context of operational data systems?",
+            "ground_truth": "While it originally referred to commercial exchanges like making a sale, a transaction in modern operational databases loosely refers to a group of low-latency reads and writes that form a logical unit.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How do product analytics systems differ from traditional OLAP data systems?",
+            "ground_truth": "Product analytics systems (like Pinot or Druid) ingest data in real time and are optimized for low-latency queries embedded directly into user-facing products. In contrast, traditional OLAP systems usually ingest data in batches and prioritize high-throughput over low-latency.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How is data usually extracted from external SaaS products into a data warehouse when direct database access is unavailable?",
+            "ground_truth": "Because direct database access is blocked and data must be retrieved via the vendor's API, organizations often use specialist data connector services like Fivetran, Singer, or Airbyte to handle the ETL process for SaaS products.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What does multitenancy mean in cloud native systems, and what engineering challenge does it present?",
+            "ground_truth": "Multitenancy means that data and computation from multiple distinct customers are handled on the same shared hardware. This requires careful engineering—such as resource isolation, encryption, and authentication—to ensure one customer does not compromise the performance or security of another.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How does the shift to cloud metered billing alter the traditional operations role of capacity planning?",
+            "ground_truth": "Because metered billing eliminates the need to calculate and purchase fixed hardware capacities in advance, traditional capacity planning transforms into financial planning, and performance optimization becomes an exercise in cost optimization.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What server management practices does the DevOps and Site Reliability Engineering (SRE) philosophy emphasize?",
+            "ground_truth": "It emphasizes prioritizing automation over manual one-off jobs, utilizing ephemeral virtual machines and services rather than maintaining long-running servers, and enabling frequent application updates.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why are distributed transactions generally avoided in microservices architectures?",
+            "ground_truth": "Distributed transactions are rarely used because they contradict the fundamental goal of microservices, which is to keep services completely independent from one another. Additionally, many databases do not natively support them.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How do data residency laws influence the geographic architecture of distributed data systems?",
+            "ground_truth": "Data residency laws mandate that personal data about people within a specific jurisdiction must be stored and processed geographically within that country. This forces services with international users to distribute their data across servers in multiple localized regions.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What are the specific roles of caches and search indexes in data-intensive applications?",
+            "ground_truth": "Caches are used to remember the results of expensive operations to speed up future read requests, while search indexes allow users to filter or search through data by keyword.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is a 'point query' in the context of an online transaction processing (OLTP) system?",
+            "ground_truth": "A point query is a fundamental access pattern in OLTP systems where the database looks up a small number of individual records based on a specific key.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How is 'feature engineering' defined in the context of machine learning workflows?",
+            "ground_truth": "Feature engineering is the process of transforming data (like database rows and columns) into vectors or matrices of numerical values in a way that maximizes the predictive performance of a trained machine learning model.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the primary advantage of using stream processing over traditional file-based data analysis?",
+            "ground_truth": "Stream processing allows analytical systems to respond to events much faster—often on the order of seconds—enabling time-sensitive applications like identifying and blocking fraudulent activity immediately.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What are the primary technical and organizational advantages of a microservices architecture?",
+            "ground_truth": "Microservices allow complex applications to be decomposed so that each service can be updated independently, assigned specific hardware resources, and maintained by separate teams without requiring extensive coordination.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why is it considered a best practice for each microservice to have its own dedicated database?",
+            "ground_truth": "Sharing a database effectively makes the database schema part of the service's API, making it rigid and hard to change. Additionally, heavy queries from one service could negatively impact the database performance for other services.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What role do 'observability' and 'tracing' tools play in distributed systems?",
+            "ground_truth": "Observability and tracing tools, such as OpenTelemetry or Jaeger, help diagnose problems by tracking which client called which server for specific operations and recording how long each network call took.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How do network topologies typically differ between cloud computing datacenters and high-performance supercomputers?",
+            "ground_truth": "Cloud networks generally use IP and Ethernet arranged in Clos topologies for high bisection bandwidth, whereas supercomputers often use specialized multidimensional meshes and toruses optimized for specific, known communication patterns.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why does the GDPR's 'right to be forgotten' present a significant engineering challenge for certain modern data systems?",
+            "ground_truth": "The requirement to erase specific user data conflicts with the design of many modern data systems that rely on immutable, append-only logs, making it difficult to delete data trapped in the middle of these files or within derived datasets.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Beyond standard infrastructure billing, what hidden risks should be factored into the cost-benefit calculation of storing data?",
+            "ground_truth": "Organizations must also account for the risks of legal liability, severe reputational damage if the data is compromised by adversaries, and the financial penalties of non-compliance with privacy regulations.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What is the primary role of data pipelines when managing a system of record and derived data?",
+            "ground_truth": "Data pipelines (or data integration processes) are necessary to update the derived data systems efficiently whenever the original, authoritative data within the system of record changes.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "In what specific scenario is self-hosting a data system typically more cost-effective than using cloud services?",
+            "ground_truth": "Self-hosting is often cheaper if an organization already possesses the operational skills to deploy the system and if the system's workload is highly predictable, meaning hardware won't sit idle during low-demand periods.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How do object storage services like Amazon S3 or Azure Blob Storage improve upon traditional physical storage?",
+            "ground_truth": "Object storage services hide the underlying physical hardware. They automatically distribute data across multiple machines so users do not have to worry about individual disk failures or running out of storage space on a single server.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How can organizations partially mitigate the risk of vendor lock-in when adopting cloud services?",
+            "ground_truth": "The risk of vendor lock-in can be mitigated if alternative services expose a compatible, standard API, which significantly lowers the cost and engineering effort required to switch to a different provider.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "What are some common technical limitations or drawbacks of using serverless (FaaS) infrastructure?",
+            "ground_truth": "Serverless providers often impose strict time limits on function execution, restrict the available runtime environments, and functions may experience slow start times (cold starts) when they are first invoked.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why does cloud computing generally require stronger security mechanisms than traditional High-Performance Computing (HPC)?",
+            "ground_truth": "In cloud computing, the network and physical hardware are shared among multiple, mutually untrusting organizations (multitenancy). In contrast, supercomputers usually assume a high level of trust among their authorized users.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "How can the geographic flexibility of distributed systems contribute to environmental sustainability?",
+            "ground_truth": "If computing jobs are flexible in terms of time and location, organizations can schedule them in regions and at times when abundant renewable electricity is available, thereby reducing carbon emissions.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Why is the evolution of APIs in a microservices architecture considered a significant development challenge?",
+            "ground_truth": "Modifying APIs by adding or removing fields can cause dependent client services to break. Worse, these integration failures are often not discovered until late in the development cycle, such as during staging or production deployment.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Which single-node database technologies are highlighted as viable options for workloads that do not require distributed systems?",
+            "ground_truth": "The text mentions DuckDB, SQLite, and KùzuDB as modern single-node databases capable of handling many workloads efficiently without the complexity of a distributed architecture.",
+            "target_file": "datalab-output-a.pdf.md"
+        },
+        {
+            "question": "Beyond regulatory compliance, what are some profound societal consequences of automated data systems mentioned in the text?",
+            "ground_truth": "Automated data systems influence society by shaping political opinions through news consumption algorithms, and by making life-altering decisions such as determining loan and insurance eligibility, selecting job candidates, or identifying criminal suspects.",
+            "target_file": "datalab-output-a.pdf.md"
+        }
+    ]
+}
