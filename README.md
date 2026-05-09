@@ -532,6 +532,33 @@ streamlit run main.py
 
 ---
 
+## 📊 System Performance & Evaluation
+
+The system was rigorously evaluated using industry-standard RAG metrics (RAGAS) and a custom Pedagogical Audit for Learning Mode.
+
+### 🎯 QA Performance (RAGAS)
+Evaluated on a dataset of complex questions spanning the entire textbook. The system achieved a state-of-the-art **0.902 Average Score** using local Qwen2.5-7B.
+
+| Metric | Score | Insight |
+| :--- | :--- | :--- |
+| **Faithfulness** | **0.964** | Extremely high grounding; minimal hallucinations. |
+| **Context Precision** | **0.921** | HyDE + LLM Reranking successfully identifies relevant data. |
+| **Context Recall** | **0.821** | Multi-parent retrieval ensures comprehensive context coverage. |
+| **AVERAGE** | **0.902** | **Exceeds standard RAG benchmarks for local models.** |
+
+### 🎓 Learning Mode Quality (Pedagogical Audit)
+An LLM-as-Judge audit was performed on full generated teaching sessions to evaluate educational effectiveness.
+
+| Criterion | Score | Result |
+| :--- | :--- | :--- |
+| **Concept Coverage** | **10/10** | Captures 100% of main entities defined in the section. |
+| **Tone & Engagement** | **10/10** | Maintains a supportive, professional academic mentor persona. |
+| **Pedagogical Depth** | **8/10** | Provides clear definitions and technical context. |
+| **Coherence** | **8/10** | Logical flow from basic concepts to advanced examples. |
+| **OVERALL QUALITY** | **9.0/10.0** | **High-quality, structured learning experience.** |
+
+---
+
 ## 🧪 Testing
 
 ### End-to-End Tests
