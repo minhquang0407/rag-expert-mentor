@@ -185,21 +185,31 @@ The system implements a **3-layer memory architecture** inspired by cognitive sc
 
 ```mermaid
 flowchart TB
-    Q["Student asks a question"] --> R["RETRIEVAL (Read)"]
+    Q["Student asks a question"] --> R_P1["PHASE 1: LIGHTWEIGHT RETRIEVAL"]
     
-    R --> R1["Qdrant: search_semantic_memory()<br/>→ Semantically similar past Q&A"]
-    R --> R2["Neo4j: get_recent_history()<br/>→ Last 5 conversations"]
+    R_P1 --> R1["Qdrant: search_semantic_memory()<br/>→ Semantically similar past Q&A (Summaries)"]
+    R_P1 --> R2["Neo4j: get_recent_history()<br/>→ Last 5 conversations (Summaries)"]
     
-    R1 --> LLM["LLM generates answer"]
-    R2 --> LLM
+    R1 --> Router{"LLM Router: Evaluates Context"}
+    R2 --> Router
+    
+    Router -- "action: answer<br/>(Context is sufficient)" ----> LLM["LLM generates final answer"]
+    Router -- "action: fetch_raw<br/>(Missing exact details)" --> R_P2["PHASE 2: DEEP RETRIEVAL<br/>Neo4j: get_raw_chat_turns(turn_ids)"]
+    
+    R_P2 -- "Injects raw text" --> LLM
     
     LLM --> P["PERSISTENCE (Write)"]
     
     P --> P1["1. LLM summarizes Q&A<br/>→ 2-3 technical bullet points"]
     P --> P2["2. Qdrant: upsert_user_memory()<br/>→ Embedded summary vector"]
     P --> P3["3. Neo4j: save_chat_turn()<br/>→ ChatTurn node + NEXT_TURN chain<br/>+ DISCUSSED → Concept edges"]
-```
 
+
+    class R_P1,R_P2 phase
+    class Router router
+    class LLM action
+    class R1,R2,P2,P3 db
+```
 ### Self-Routing: The `fetch_raw` Mechanism
 
 The most distinctive feature of the QA system is **self-routing**:
@@ -249,7 +259,7 @@ The orchestrator supports **runtime queue mutation** via `mutate_queue()`, which
 
 ---
 
-## 💾 Database Schemas
+## Database Schemas
 
 ### Qdrant Collections
 
@@ -265,18 +275,16 @@ All collections use **Named Vectors** with the key `fast-paraphrase-multilingual
 
 ```mermaid
 graph LR
-    User["👤 User<br/>{id}"]
-    Concept["💡 Concept<br/>{id, type, is_main,<br/>source_locators[]}"]
-    ChatTurn["💬 ChatTurn<br/>{id, raw_query,<br/>raw_answer, summary,<br/>timestamp}"]
+    User["👤 User"]
+    Concept["Concept"]
+    ChatTurn["ChatTurn"]
 
     User -->|HAS_LEARNED| Concept
     User -->|HAS_TURN| ChatTurn
     ChatTurn -->|NEXT_TURN| ChatTurn
     ChatTurn -->|DISCUSSED| Concept
-    Concept -->|PREREQUISITE_OF| Concept
-    Concept -->|RELATES_TO| Concept
-    Concept -->|PART_OF| Concept
-    Concept -->|DESCRIBES| Concept
+    Concept -->|RELATIONSHIP| Concept
+
 ```
 
 ### Neo4j Relationship Types
@@ -406,12 +414,12 @@ streamlit run main.py
 
 ---
 
-## 📊 S<img width="1290" height="707" alt="diagram-export-5-9-2026-3_13_50-AM" src="https://github.com/user-attachments/assets/b196bec9-1c8c-4b11-9a90-153b3871e4a4" />
-ystem Performance & Evaluation
+## System Performance & Evaluation
+
 
 The system was rigorously evaluated using industry-standard RAG metrics (RAGAS) and a custom Pedagogical Audit for Learning Mode.
 
-### 🎯 QA Performance (RAGAS)
+### QA Performance (RAGAS)
 Evaluated on a dataset of complex questions spanning the entire textbook. The system achieved a state-of-the-art **0.902 Average Score** using local Qwen2.5-7B.
 
 | Metric | Score | Insight |
@@ -434,7 +442,7 @@ An LLM-as-Judge audit was performed on full generated teaching sessions to evalu
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### End-to-End & Performance Tests
 
