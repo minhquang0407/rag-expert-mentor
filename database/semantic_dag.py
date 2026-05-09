@@ -43,13 +43,15 @@ class Neo4jManager(IGraphStore):
             for node in nodes:
                 node_name = str(node.get("name", "")).strip()
                 node_type = str(node.get("type", "concept")).strip()
+                node_desc = str(node.get("description", "")).strip()
                 if not node_name: continue
                 
                 session.run("""
                 MERGE (n:Concept {id: $id})
                 SET n.type = $type
+                SET n.description = $desc
                 SET n.source_locators = CASE WHEN $loc IN coalesce(n.source_locators, []) THEN n.source_locators ELSE coalesce(n.source_locators, []) + $loc END
-                """, id=node_name, type=node_type, loc=locator)
+                """, id=node_name, type=node_type, desc=node_desc, loc=locator)
 
             # 2. Đánh dấu Main Entities
             for main_ent in main_entities:
@@ -154,27 +156,40 @@ class Neo4jManager(IGraphStore):
             return []
 
         if search_mode == "semi_search":
-            # Semi-Search: Look backwards 1 hop (incoming edges). Pattern: (m)-[r]->(n)
+            # Semi-Search: Look backwards 1 hop. Pattern: (m)-[r]->(n)
             query = """
             MATCH (m)-[r]->(n)
             WHERE n.id IN $node_names
-            RETURN DISTINCT m.id AS source, type(r) AS relation, n.id AS target
+            RETURN DISTINCT 
+                m.id AS source, m.description AS source_desc,
+                type(r) AS relation, 
+                n.id AS target, n.description AS target_desc
             """
         else:
-            # Search: Look all directions up to 2 hops. Pattern: (n)-[*1..2]-(m)
-            # Unwind relationships to return individual edges instead of full paths
+            # Search: Look all directions up to 2 hops.
             query = """
             MATCH p=(n)-[*1..2]-(m)
             WHERE n.id IN $node_names
             UNWIND relationships(p) AS r
             WITH DISTINCT r
-            RETURN startNode(r).id AS source, type(r) AS relation, endNode(r).id AS target
+            RETURN 
+                startNode(r).id AS source, startNode(r).description AS source_desc,
+                type(r) AS relation, 
+                endNode(r).id AS target, endNode(r).description AS target_desc
             """
 
         try:
             with self.driver.session() as session:
                 results = session.run(query, node_names=node_names)
-                return [{"source": record["source"], "relation": record["relation"], "target": record["target"]} for record in results]
+                return [
+                    {
+                        "source": record["source"], 
+                        "source_desc": record["source_desc"],
+                        "relation": record["relation"], 
+                        "target": record["target"],
+                        "target_desc": record["target_desc"]
+                    } for record in results
+                ]
         except Exception as e:
             print(f"[!] Neo4j Query Error: {e}")
             return []

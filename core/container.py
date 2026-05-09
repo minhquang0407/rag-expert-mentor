@@ -28,25 +28,25 @@ class Container(containers.DeclarativeContainer):
     )
 
     # LLM Providers using Factory
-    primary_llm = providers.Singleton(
+    ingestion_llm = providers.Singleton(
         LLMFactory.create_llm,
         provider=config.llm_provider,
         model_name=config.llm_model_name,
         base_url=config.llm_base_url,
-        temperature=0.0,
-        max_tokens=2048,
-        top_p=config.top_p,
+        temperature=config.ingestion_temperature,
+        max_tokens=config.ingestion_max_token,
+        top_p=config.ingestion_top_p,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
 
-    chat_llm = providers.Singleton(
+    learning_llm = providers.Singleton(
         LLMFactory.create_llm,
         provider=config.llm_provider,
         model_name=config.llm_model_name,
         base_url=config.llm_base_url,
-        temperature=0.3,
-        max_tokens=4096,
-        top_p=config.top_p
+        temperature=config.learning_temperature,
+        max_tokens=config.learning_max_token,
+        top_p=config.learning_top_p,
     )
 
     qa_llm = providers.Singleton(
@@ -54,17 +54,17 @@ class Container(containers.DeclarativeContainer):
         provider=config.llm_provider,
         model_name=config.llm_model_name,
         base_url=config.llm_base_url,
-        temperature=config.temperature,
-        max_tokens=2048,
-        top_p=config.top_p,
+        temperature=config.qa_temperature,
+        max_tokens=config.qa_max_token,
+        top_p=config.qa_top_p,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
 
     # Services
     llm_service = providers.Singleton(
         LLMService,
-        llm=primary_llm,
-        chat_llm=chat_llm
+        llm=ingestion_llm,
+        chat_llm=learning_llm
     )
 
     support_agent = providers.Singleton(

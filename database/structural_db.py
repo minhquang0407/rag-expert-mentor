@@ -79,24 +79,22 @@ class QdrantVectorStore(IVectorStore):
             points=[PointStruct(id=parent_id, vector={self.vector_name: vector}, payload=payload)]
         )
 
-    def upsert_questions(self, questions: List[str], parent_id: str, source_file: str) -> None:
+    def upsert_questions(self, qa_pairs: List[Dict[str, str]], parent_id: str, source_file: str) -> None:
         """
-        - Reason: For HyDE (Hypothetical Document Embeddings) implementation.
-        - Function: Links multiple hypothetical questions to a single parent section.
-        - Usage: Improves retrieval accuracy for student queries.
-        - Parameters: questions, parent_id, source_file.
-        - Returns: None.
+        - Function: Links multiple hypothetical questions and their key knowledge to a parent section.
         """
-        if not questions:
+        if not qa_pairs:
             return
 
+        questions = [qa["question"] for qa in qa_pairs]
         vectors = list(self.embed_model.embed_documents(questions))
         points = []
 
-        for idx, (q_text, vec) in enumerate(zip(questions, vectors)):
+        for idx, (qa, vec) in enumerate(zip(qa_pairs, vectors)):
             valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{parent_id}_q_{idx}"))
             payload = {
-                "page_content": q_text,
+                "page_content": qa["question"],
+                "key_knowledge": qa.get("key_knowledge", ""),
                 "parent_id": parent_id,
                 "source": source_file,
                 "type": "question"
@@ -218,22 +216,39 @@ class QdrantVectorStore(IVectorStore):
             return []
 
         candidates = [
-            {"question": r.payload.get("page_content", ""), "parent_id": r.payload.get("parent_id")}
+            {
+                "question": r.payload.get("page_content", ""), 
+                "parent_id": r.payload.get("parent_id"),
+                "key_knowledge": r.payload.get("key_knowledge", "")
+            }
             for r in results
         ]
 
-        best_parent_id = llm_service.rerank_candidate_questions(query, candidates)
-        if not best_parent_id:
+        best_parent_ids = llm_service.rerank_candidate_questions(query, candidates)
+        if not best_parent_ids:
             return []
 
+        # Fetch all unique parent sections (limit to top 2 for token safety)
+        best_parent_ids = best_parent_ids[:2]
+        
         parent_records, _ = self.client.scroll(
             collection_name=self.parent_coll,
-            scroll_filter=models.Filter(must=[models.HasIdCondition(has_id=[best_parent_id])]),
-            limit=1,
+            scroll_filter=models.Filter(must=[models.HasIdCondition(has_id=best_parent_ids)]),
+            limit=len(best_parent_ids),
             with_payload=True
         )
 
-        return [{"page_content": r.payload.get("page_content", ""), "metadata": r.payload} for r in parent_records]
+        final_results = []
+        for r in parent_records:
+            meta = r.payload.copy()
+            
+            # Find any candidate that points to this parent to get its micro-context
+            related_candidate = next((c for c in candidates if c["parent_id"] == r.id), candidates[0])
+            meta["matched_knowledge"] = related_candidate.get("key_knowledge", "")
+            
+            final_results.append({"page_content": r.payload.get("page_content", ""), "metadata": meta})
+
+        return final_results
 
     def upsert_user_memory(self, user_id: str, turn_id: str, query: str, answer: str, summary: str):
         # Embed the summary (or query + summary) for semantic matching
@@ -259,7 +274,7 @@ class QdrantVectorStore(IVectorStore):
         
         response = self.client.query_points(
             collection_name=self.memory_coll,
-            query=query_vector,
+            query= query_vector,
             using=self.vector_name,
             query_filter=user_filter,
             limit=limit

@@ -6,9 +6,15 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="ollama", description="Provider for LLM (e.g. ollama, openai, gemini)")
     llm_model_name: str = Field(default="qwen2.5:7b")
     llm_base_url: str = Field(default="http://localhost:11434/v1")
-    temperature: float = Field(default=0.3)
-    top_p: float = Field(default=0.2)
-    max_token: int = Field(default=2048)
+    ingestion_temperature: float = Field(default=0.0)
+    ingestion_top_p: float = Field(default=0.2)
+    ingestion_max_token: int = Field(default=2048)
+    learning_temperature: float = Field(default=0.3)
+    learning_top_p: float = Field(default=0.7)
+    learning_max_token: int = Field(default=4096)
+    qa_temperature: float = Field(default=0.3)
+    qa_top_p: float = Field(default=0.7)
+    qa_max_token: int = Field(default=2048)
 
     # Qdrant Vector DB Configuration
     qdrant_host: str = Field(default="localhost")

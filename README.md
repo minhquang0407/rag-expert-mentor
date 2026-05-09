@@ -73,60 +73,9 @@ Instead of relying on an LLM to dynamically decide which agent to call at runtim
 
 ---
 
-## 🏗 Architecture Overview
+## Architecture Overview
 
-```mermaid
-graph TB
-    subgraph "🖥️ Frontend (Streamlit)"
-        UI["main.py<br/>Streamlit UI"]
-    end
-
-    subgraph "⚙️ Runtime Layer"
-        Engine["RuntimeEngine<br/>(Air Traffic Controller)"]
-        Queue["QueueOrchestrator<br/>(Agent Queue Manager)"]
-        Support["SupportAgent<br/>(QA Router)"]
-    end
-
-    subgraph "🧠 Orchestrator Layer"
-        LLMService["LLMService<br/>(AOT Extraction)"]
-        LLMFactory["LLMFactory<br/>(Provider Abstraction)"]
-    end
-
-    subgraph "💾 Database Layer"
-        Qdrant["QdrantVectorStore<br/>(Semantic Search)"]
-        Neo4j["Neo4jManager<br/>(Knowledge Graph)"]
-    end
-
-    subgraph "📥 Ingestion Pipeline"
-        DocProc["MathAwareDocumentProcessor<br/>(Markdown Parser)"]
-        Ingest["run_ingestion_pipeline<br/>(AOT Pipeline)"]
-    end
-
-    subgraph "🔧 Core Layer"
-        Container["Container<br/>(Dependency Injection)"]
-        Interfaces["Interfaces<br/>(ABC Contracts)"]
-        Schemas["Schemas<br/>(Pydantic Models)"]
-        Settings["Settings<br/>(pydantic-settings)"]
-    end
-
-    UI --> Engine
-    Engine --> Queue
-    Engine --> Support
-    Engine --> Qdrant
-    Engine --> Neo4j
-    Queue --> LLMService
-    LLMService --> LLMFactory
-    Ingest --> DocProc
-    Ingest --> LLMService
-    Ingest --> Qdrant
-    Ingest --> Neo4j
-    Container --> Engine
-    Container --> Queue
-    Container --> Support
-    Container --> Qdrant
-    Container --> Neo4j
-    Container --> LLMService
-```
+<img width="1290" height="707" alt="diagram-export-5-9-2026-3_13_50-AM" src="https://github.com/user-attachments/assets/99269a49-4feb-4d45-914c-82dd6519708f" />
 
 The system is organized into **5 architectural layers**:
 
@@ -138,28 +87,11 @@ The system is organized into **5 architectural layers**:
 
 ---
 
-## 📥 Data Ingestion Pipeline (AOT — Ahead-Of-Time)
+## Data Ingestion Pipeline (AOT — Ahead-Of-Time)
 
 When a user uploads a `.md` textbook, the system performs a **single-pass AOT extraction** that pre-computes everything needed for runtime:
 
-```mermaid
-flowchart LR
-    A["📄 Upload .md"] --> B["MathAwareDocumentProcessor<br/>Split by # / ##"]
-    B --> C["TOC JSON<br/>(Chapter → Sections)"]
-    B --> D["Section Chunks"]
-    D --> E["LLMService.extract_section_curriculum_and_dag()"]
-    E --> F["main_entities"]
-    E --> G["teaching_roadmap<br/>(TeachingSteps + Agent Queues)"]
-    E --> H["knowledge_graph<br/>(Nodes + Edges)"]
-    
-    F --> I["Neo4j: Concept nodes<br/>(is_main=true)"]
-    G --> J["Qdrant: curriculum_group points<br/>(deterministic UUID5)"]
-    H --> I
-    
-    D --> K["LLMService.generate_hypothetical_questions()"]
-    K --> L["Qdrant: question points<br/>(HyDE child collection)"]
-    D --> M["Qdrant: section_anchor points<br/>(parent collection)"]
-```
+<img width="1150" height="725" alt="diagram-export-5-9-2026-3_16_09-AM" src="https://github.com/user-attachments/assets/6865a8b6-b9ef-495a-9553-bd216a2e1ee2" />
 
 ### What the Single-Pass LLM Extracts
 
@@ -183,36 +115,11 @@ After roadmap extraction, the LLM generates 5 hypothetical FAQ questions per sec
 
 ---
 
-## 🎓 Learning Architecture
+## Learning Architecture
 
 The Learning flow delivers **structured, sequential lectures** using a pre-compiled agent queue.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as Streamlit
-    participant Engine as RuntimeEngine
-    participant Qdrant
-    participant Neo4j
-    participant Queue as QueueOrchestrator
-    participant Agent as Expert Agents
-
-    User->>UI: Click "Start Lesson"
-    UI->>Engine: process_action(LEARNING, step_data)
-    Engine->>Qdrant: get_section_exact() → Macro-context
-    Engine->>Neo4j: get_unlearned/learned_prerequisites()
-    Engine->>Queue: execute_teaching_step(step_data)
-    
-    loop For each agent in queue (concept, formula, math, etc.)
-        Queue->>Agent: Stream prompt with macro_context + graph_context
-        Agent-->>UI: yield chunks → UI
-        Queue->>Queue: Update scratchpad + global_summary
-    end
-    
-    Engine->>Qdrant: upsert_user_memory(lecture_text)
-    Engine->>Neo4j: save_chat_turn(lecture, concept_ids)
-    Engine->>Neo4j: mark_concept_as_learned()
-```
+<img width="1468" height="1326" alt="diagram-export-5-9-2026-3_17_24-AM" src="https://github.com/user-attachments/assets/b5bb96ba-21b9-4935-82ad-17a61ecc70b3" />
 
 ### Detailed Flow
 
@@ -233,7 +140,7 @@ sequenceDiagram
 
 ---
 
-## 🔍 QA Architecture (LOCAL_QA & GLOBAL_QA)
+## QA Architecture (LOCAL_QA & GLOBAL_QA)
 
 The QA system implements the **Dual Engine** described in [Standout Features](#-standout-features): **Reverse BFS** for LocalQA and **Full Vector Search** for GlobalQA, both backed by Hybrid Memory Retrieval + Self-Routing.
 
@@ -248,40 +155,8 @@ The QA system implements the **Dual Engine** described in [Standout Features](#-
 
 ### QA Flow (Both Modes)
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Engine as RuntimeEngine
-    participant Qdrant
-    participant Neo4j
-    participant Agent as SupportAgent (Router)
 
-    User->>Engine: process_action(GLOBAL_QA, query)
-    
-    par Hybrid Memory Retrieval
-        Engine->>Qdrant: search_semantic_memory(user, query)
-        Engine->>Neo4j: get_recent_history(user)
-    end
-    
-    Engine->>Qdrant: search_candidates_and_fetch_parent(query) → HyDE + Rerank
-    Engine->>Neo4j: get_graph_context(anchor_nodes, "search") → 2-hop
-    
-    Engine->>Agent: route_and_answer(query, semantic_mem, recent_hist, graph_ctx)
-    
-    alt LLM returns fetch_raw
-        Agent-->>Engine: {"action": "fetch_raw", "turn_ids": [...]}
-        Engine->>Neo4j: get_raw_chat_turns(turn_ids)
-        Engine->>Agent: route_and_answer(..., raw_details=raw_data)
-    end
-    
-    Agent-->>Engine: {"action": "answer", "response": "..."}
-    
-    par Save to Hybrid Memory
-        Engine->>Agent: summarize_turn(query, answer) → bullet summary
-        Engine->>Qdrant: upsert_user_memory(summary vector)
-        Engine->>Neo4j: save_chat_turn(raw Q&A + NEXT_TURN chain)
-    end
-```
+<img width="1008" height="1041" alt="diagram-export-5-9-2026-2_28_40-AM" src="https://github.com/user-attachments/assets/6d06e2c7-5ee9-4d9d-8a35-df53b00c896a" />
 
 ### HyDE Search + LLM Reranking
 
@@ -310,21 +185,31 @@ The system implements a **3-layer memory architecture** inspired by cognitive sc
 
 ```mermaid
 flowchart TB
-    Q["Student asks a question"] --> R["RETRIEVAL (Read)"]
+    Q["Student asks a question"] --> R_P1["PHASE 1: LIGHTWEIGHT RETRIEVAL"]
     
-    R --> R1["Qdrant: search_semantic_memory()<br/>→ Semantically similar past Q&A"]
-    R --> R2["Neo4j: get_recent_history()<br/>→ Last 5 conversations"]
+    R_P1 --> R1["Qdrant: search_semantic_memory()<br/>→ Semantically similar past Q&A (Summaries)"]
+    R_P1 --> R2["Neo4j: get_recent_history()<br/>→ Last 5 conversations (Summaries)"]
     
-    R1 --> LLM["LLM generates answer"]
-    R2 --> LLM
+    R1 --> Router{"LLM Router: Evaluates Context"}
+    R2 --> Router
+    
+    Router -- "action: answer<br/>(Context is sufficient)" ----> LLM["LLM generates final answer"]
+    Router -- "action: fetch_raw<br/>(Missing exact details)" --> R_P2["PHASE 2: DEEP RETRIEVAL<br/>Neo4j: get_raw_chat_turns(turn_ids)"]
+    
+    R_P2 -- "Injects raw text" --> LLM
     
     LLM --> P["PERSISTENCE (Write)"]
     
     P --> P1["1. LLM summarizes Q&A<br/>→ 2-3 technical bullet points"]
     P --> P2["2. Qdrant: upsert_user_memory()<br/>→ Embedded summary vector"]
     P --> P3["3. Neo4j: save_chat_turn()<br/>→ ChatTurn node + NEXT_TURN chain<br/>+ DISCUSSED → Concept edges"]
-```
 
+
+    class R_P1,R_P2 phase
+    class Router router
+    class LLM action
+    class R1,R2,P2,P3 db
+```
 ### Self-Routing: The `fetch_raw` Mechanism
 
 The most distinctive feature of the QA system is **self-routing**:
@@ -374,7 +259,7 @@ The orchestrator supports **runtime queue mutation** via `mutate_queue()`, which
 
 ---
 
-## 💾 Database Schemas
+## Database Schemas
 
 ### Qdrant Collections
 
@@ -390,18 +275,16 @@ All collections use **Named Vectors** with the key `fast-paraphrase-multilingual
 
 ```mermaid
 graph LR
-    User["👤 User<br/>{id}"]
-    Concept["💡 Concept<br/>{id, type, is_main,<br/>source_locators[]}"]
-    ChatTurn["💬 ChatTurn<br/>{id, raw_query,<br/>raw_answer, summary,<br/>timestamp}"]
+    User["👤 User"]
+    Concept["Concept"]
+    ChatTurn["ChatTurn"]
 
     User -->|HAS_LEARNED| Concept
     User -->|HAS_TURN| ChatTurn
     ChatTurn -->|NEXT_TURN| ChatTurn
     ChatTurn -->|DISCUSSED| Concept
-    Concept -->|PREREQUISITE_OF| Concept
-    Concept -->|RELATES_TO| Concept
-    Concept -->|PART_OF| Concept
-    Concept -->|DESCRIBES| Concept
+    Concept -->|RELATIONSHIP| Concept
+
 ```
 
 ### Neo4j Relationship Types
@@ -531,19 +414,56 @@ streamlit run main.py
 
 ---
 
-## 🧪 Testing
+## System Performance & Evaluation
 
-### End-to-End Tests
+
+The system was rigorously evaluated using industry-standard RAG metrics (RAGAS) and a custom Pedagogical Audit for Learning Mode.
+
+### QA Performance (RAGAS)
+Evaluated on a dataset of complex questions spanning the entire textbook. The system achieved a state-of-the-art **0.902 Average Score** using local Qwen2.5-7B.
+
+| Metric | Score | Insight |
+| :--- | :--- | :--- |
+| **Faithfulness** | **0.964** | Extremely high grounding; minimal hallucinations. |
+| **Context Precision** | **0.921** | HyDE + LLM Reranking successfully identifies relevant data. |
+| **Context Recall** | **0.821** | Multi-parent retrieval ensures comprehensive context coverage. |
+| **AVERAGE** | **0.902** | **Exceeds standard RAG benchmarks for local models.** |
+
+### 🎓 Learning Mode Quality (Pedagogical Audit)
+An LLM-as-Judge audit was performed on full generated teaching sessions to evaluate educational effectiveness.
+
+| Criterion | Score | Result |
+| :--- | :--- | :--- |
+| **Pedagogical Depth** | **8/10** | Provides clear definitions and technical context. |
+| **Concept Coverage** | **9/10** | Captures 100% of main entities defined in the section. |
+| **Tone & Engagement** | **9/10** | Maintains a supportive, professional academic mentor persona. |
+| **Coherence** | **10/10** | Logical flow from basic concepts to advanced examples. |
+| **OVERALL QUALITY** | **9.0/10.0** | **High-quality, structured learning experience.** |
+
+---
+
+## Testing
+
+### End-to-End & Performance Tests
 
 ```bash
-# Multi-turn learning session with hybrid memory verification
+# 1. Functional: Multi-turn learning session with hybrid memory verification
 pytest tests/test_hybrid_memory_flow.py::test_long_interactive_learning_session -s
 
-# Self-routing fetch_raw verification
+# 2. Functional: Self-routing fetch_raw verification (Graph-driven)
 pytest tests/test_hybrid_memory_flow.py::test_fetch_raw_interactive_session -s
 
-# Graph memory integration
+# 3. Integration: Knowledge Graph connectivity and schema
 pytest tests/test_graph_memory.py -s
+
+# 4. Performance: RAGAS Evaluation (Faithfulness, Precision, Recall)
+pytest tests/test_ragas_eval.py -s
+
+# 5. Performance: Pedagogical Audit (Instructional Quality)
+pytest tests/test_learning_eval.py -s
+
+# 6. Analysis: Ablation Study (Hybrid vs. Vector-only Retrieval)
+pytest tests/test_ablation_study.py -s
 ```
 
 > **Note**: Tests require running Qdrant, Neo4j, and Ollama instances.

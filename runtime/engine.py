@@ -36,7 +36,7 @@ class SupportAgent:
         except Exception as e:
             return f"Summary unavailable: {e}"
 
-    def route_and_answer(self, query: str, semantic_memory: list, recent_history: list, graph_context: list = None, macro_context: str = "", raw_details: list = None) -> dict:
+    def route_and_answer(self, query: str, semantic_memory: list, recent_history: list, graph_context: list = None, macro_context: str = "", micro_context: str = "", raw_details: list = None) -> dict:
         system_prompt = """
         You are an Expert Academic Mentor. 
         You have access to [SEMANTIC MEMORY] (related past Q&A summaries) and [RECENT HISTORY] (latest chat context).
@@ -60,7 +60,10 @@ class SupportAgent:
         [GRAPH CONTEXT]:
         {graph_context}
 
-        [MACRO TEXT CONTEXT]:
+        [MICRO CONTEXT (Targeted Answer)]:
+        {micro_context}
+
+        [MACRO TEXT CONTEXT (Broad Background)]:
         {macro_context}
 
         [STUDENT QUESTION]:
@@ -72,20 +75,45 @@ class SupportAgent:
             ("human", human_prompt)
         ])
 
+        # Truncate context to prevent token overflow (which causes empty responses or 40k-token runaways)
+        safe_macro = (macro_context[:3000] + "...[truncated]") if macro_context and len(macro_context) > 3000 else (macro_context or "EMPTY")
+        safe_micro = (micro_context[:1000] + "...[truncated]") if micro_context and len(micro_context) > 1000 else (micro_context or "EMPTY")
+        safe_semantic = json.dumps(semantic_memory[:5], ensure_ascii=False) if semantic_memory else "EMPTY"
+        safe_recent = json.dumps(recent_history[:5], ensure_ascii=False) if recent_history else "EMPTY"
+        safe_graph = json.dumps(graph_context[:5], ensure_ascii=False) if graph_context else "EMPTY"
+        safe_raw = json.dumps(raw_details[:3], ensure_ascii=False) if raw_details else "NONE"
+
         _input = prompt.format_messages(
-            semantic_memory=json.dumps(semantic_memory, ensure_ascii=False) if semantic_memory else "EMPTY",
-            recent_history=json.dumps(recent_history, ensure_ascii=False) if recent_history else "EMPTY",
-            raw_details=json.dumps(raw_details, ensure_ascii=False) if raw_details else "NONE",
-            graph_context=json.dumps(graph_context, ensure_ascii=False) if graph_context else "EMPTY",
-            macro_context=macro_context if macro_context else "EMPTY",
+            semantic_memory=safe_semantic,
+            recent_history=safe_recent,
+            raw_details=safe_raw,
+            graph_context=safe_graph,
+            macro_context=safe_macro,
+            micro_context=safe_micro,
             query=query
         )
 
         try:
-            response = self.llm.invoke(_input)
-            start = response.content.find('{')
-            end = response.content.rfind('}')
-            clean_json = response.content[start:end+1]
+            response = self.llm.invoke(_input, max_tokens=2048)
+            content = response.content.strip()
+            start = content.find('{')
+            end = content.rfind('}')
+            
+            if start == -1:
+                # Fallback: if no JSON structure at all, treat as text answer
+                return {"action": "answer", "response": content}
+            
+            if end == -1:
+                # Handle truncated JSON: Add missing closing brace
+                print("[!] Truncated JSON detected, attempting repair...")
+                clean_json = content[start:]
+                # Check if we need to close a quote first
+                if clean_json.count('"') % 2 != 0:
+                    clean_json += '"'
+                clean_json += '}'
+            else:
+                clean_json = content[start:end+1]
+                
             parsed = json.loads(clean_json)
             
             # Normalize: LLM may use 'answer', 'text', or 'content' instead of 'response'
@@ -212,6 +240,7 @@ class RuntimeEngine:
             # 2. Search Anchor using existing HyDE search
             anchor_nodes = []
             macro_context = ""
+            micro_context = ""
             search_results = self.vector_db.search_candidates_and_fetch_parent(
                 query=query,
                 llm_service=self.orchestrator.llm_service,
@@ -219,11 +248,22 @@ class RuntimeEngine:
             )
 
             if search_results:
-                macro_context = search_results[0].get("page_content", "")
-                if "metadata" in search_results[0]:
-                    raw_anchors = search_results[0]["metadata"].get("anchor_nodes", "")
-                    if raw_anchors:
-                        anchor_nodes = [node.strip() for node in raw_anchors.split(",") if node.strip()]
+                macro_list = []
+                micro_list = []
+                all_anchors = set()
+                
+                for res in search_results:
+                    macro_list.append(res.get("page_content", ""))
+                    if "metadata" in res:
+                        micro_list.append(res["metadata"].get("matched_knowledge", ""))
+                        raw_anchors = res["metadata"].get("anchor_nodes", "")
+                        if raw_anchors:
+                            for node in raw_anchors.split(","):
+                                all_anchors.add(node.strip())
+                
+                macro_context = "\n---\n".join(macro_list)
+                micro_context = "\n---\n".join(micro_list)
+                anchor_nodes = list(all_anchors)
 
             # 3. Neo4j Search
             search_mode = "search" if action_mode == "GLOBAL_QA" else "semi_search"
@@ -235,7 +275,8 @@ class RuntimeEngine:
                 semantic_memory=semantic_mem, 
                 recent_history=recent_mem, 
                 graph_context=graph_data, 
-                macro_context=macro_context
+                macro_context=macro_context,
+                micro_context=micro_context
             )
 
             if route_res.get("action") == "fetch_raw":
@@ -248,6 +289,7 @@ class RuntimeEngine:
                     recent_history=recent_mem, 
                     graph_context=graph_data, 
                     macro_context=macro_context,
+                    micro_context=micro_context,
                     raw_details=raw_details
                 )
 
