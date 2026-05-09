@@ -51,10 +51,9 @@ Instead of relying on an LLM to dynamically decide which agent to call at runtim
 - [x] Multi-Agent Pipeline & AOT Routing
 - [x] Neo4j + Qdrant Hybrid Memory
 - [x] Multi-tenant UI State Synchronization
+- [x] **RAGAS Evaluation:** Implement automated metrics to measure faithfulness and answer relevancy.
 - [ ] **Multi-modal Ingestion:** Support for PDFs with images and diagrams.
 - [ ] **Web Grounding:** Allow the GlobalQA agent to search the web for concepts not found in the textbook.
-- [ ] **RAGAS Evaluation:** Implement automated metrics to measure faithfulness and answer relevancy.
-
 ---
 
 ## 🛠 Tech Stack
