@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. QDRANT - VECTOR DATABASE (Tầng Semantic Search)
+  # ==========================================
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: expert_qdrant
+    ports:
+      - "6333:6333" # Cổng HTTP (Web Dashboard & API)
+      - "6334:6334" # Cổng gRPC (Giao tiếp tốc độ cao)
+    volumes:
+      - ./database/docker_volumes/qdrant_storage:/qdrant/storage:z
+    networks:
+      - rag_network
+    restart: unless-stopped
+
+  # ==========================================
+  # 2. NEO4J - GRAPH DATABASE (Tầng Knowledge Graph)
+  # ==========================================
+  neo4j:
+    image: neo4j:5.20.0 # Sử dụng bản 5.x mới nhất hỗ trợ Vector tốt
+    container_name: expert_neo4j
+    ports:
+      - "7474:7474" # Cổng HTTP (Web Dashboard - Neo4j Browser)
+      - "7687:7687" # Cổng Bolt (Giao tiếp Python/LangChain)
+    environment:
+      # Thiết lập tài khoản mặc định. User là 'neo4j', Password là 'ExpertMentor2026'
+      - NEO4J_AUTH=neo4j/ExpertMentor2026
+
+      # Tự động tải và cài đặt plugin APOC
+      - NEO4J_PLUGINS=["apoc"]
+
+      # Cấu hình bảo mật và cấp quyền cho APOC
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+    volumes:
+      - ./database/docker_volumes/neo4j_data:/data
+      - ./database/docker_volumes/neo4j_logs:/logs
+      - ./database/docker_volumes/neo4j_plugins:/plugins
+    networks:
+      - rag_network
+    restart: unless-stopped
+
+# Định nghĩa mạng nội bộ để các container tự nói chuyện với nhau (tùy chọn cho nâng cấp sau này)
+networks:
+  rag_network:
+    driver: bridge

@@ -9,3 +9,8 @@ langchain-text-splitters
 langgraph
 langgraph-checkpoint-sqlite
 python-dotenv
+qdrant-client
+fastembed
+langchain-community
+pydantic-settings
+dependency-injector

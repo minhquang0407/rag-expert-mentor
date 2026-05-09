@@ -5,57 +5,113 @@ from database.document_processor import MathAwareDocumentProcessor
 
 
 def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
-    processor = MathAwareDocumentProcessor(max_chunk_size=1000)
-    chunks, toc_tree = processor.process_markdown(markdown_content)
+    """
+    - Reason: To orchestrate the Ahead-Of-Time (AOT) ingestion process, converting raw markdown into searchable vector structures and knowledge graphs, now explicitly capturing main entities.
+    - Function: Chunks text, calls the local LLM to extract the roadmap, DAG, and main entities, and saves them to Qdrant & Neo4j with absolute locators.
+    - Usage: Called by the main application script when a user uploads or processes a new textbook.
+    - Parameters:
+        - markdown_content (str): The raw markdown text of the book.
+        - file_name (str): The name of the file (used for metadata tracking and ID generation).
+        - db (QdrantVectorStore): The vector database instance for storing embeddings.
+        - llm (LocalLLMService): The local LLM instance (Qwen 3.5).
+        - dag (SemanticDAG): The Neo4j graph database instance.
+    - Returns: None.
+    - Return Type: None
+    - Alternatives: Implementing an event-driven ingestion queue using Celery or Kafka for large scale document processing.
+    """
+    processor = MathAwareDocumentProcessor()
+    final_document, toc_tree = processor.process_markdown(markdown_content)
 
     os.makedirs("./database/tocs", exist_ok=True)
     toc_path = f"./database/tocs/{file_name}_toc.json"
     with open(toc_path, "w", encoding="utf-8") as f:
         json.dump(toc_tree, f, ensure_ascii=False, indent=4)
-    print(f"[*] Đã lưu Mục lục tại {toc_path}")
+    print(f"[*] Saved TOC at {toc_path}")
 
-    # Gom nhóm theo Section
-    sections_dict = {}
-    for i, chunk in enumerate(chunks):
-        sec_name = chunk["metadata"].get("Section", "General")
-        if sec_name not in sections_dict: sections_dict[sec_name] = []
-        sections_dict[sec_name].append(chunk)
+    global_nodes_list = []
+    print("\n[START] Pipeline Ingestion: Entities, DAG, Curriculum & QA Generation...")
 
-    global_glossary = set()
+    for section in final_document:
+        sec_name = section["metadata"]["Section"]
+        print(f"\n -> Processing: {sec_name}")
+        full_section_text = section.get("page_content","")
 
-    print("\n[Bắt đầu] Pipeline Ingestion: DAG & LLM Question Generation...")
-    for sec_name, chunks_list in sections_dict.items():
-        print(f"\n -> Đang xử lý: {sec_name}")
-        full_section_text = "\n\n".join([c["page_content"] for c in chunks_list])
+        chapter_name = section["metadata"]["Chapter"]
 
-        # Tạo UUID duy nhất (Parent ID) cho Section này dựa trên tên file và mục lục
-        parent_id = hashlib.md5(f"{file_name}_{sec_name}".encode('utf-8')).hexdigest()
+        parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
 
-        # 1. TRÍCH XUẤT ĐỒ THỊ NGỮ NGHĨA (DAG)
-        current_glossary = list(global_glossary)[-200:]
-        triplets = llm.extract_graph_entities(full_section_text, glossary=current_glossary)
+        # =======================================================
+        # 1. INVOKE SINGLE-PASS LLM EXTRACTION
+        # =======================================================
+        llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
 
+        # [NEW]: Extract main entities from the parsed LLM response
+        main_entities = llm_data.get("main_entities", [])
+        teaching_roadmap = llm_data.get("teaching_roadmap", [])
+        
+        kg_data = llm_data.get("knowledge_graph", {})
+        edges = kg_data.get("edges", [])
+        nodes = kg_data.get("nodes", [])
+
+        # Add newly discovered nodes to the global list for the next sections to see
+        for node in nodes:
+            node_name = node.get("name", "").strip()
+            if node_name and node_name not in global_nodes_list:
+                global_nodes_list.append(node_name)
+
+        # =======================================================
+        # 2. BUILD NEO4J DAG
+        # =======================================================
         section_anchors = set()
-        for t in triplets:
-            if "source" in t: section_anchors.add(t["source"]); global_glossary.add(t["source"])
-            if "target" in t: section_anchors.add(t["target"]); global_glossary.add(t["target"])
+        for node in nodes:
+            if "name" in node: section_anchors.add(node["name"])
+        for e in edges:
+            if "source" in e: section_anchors.add(e["source"])
+            if "target" in e: section_anchors.add(e["target"])
 
-        if triplets: dag.build_graph_from_triplets(triplets)
+        if nodes or edges:
+            dag.save_knowledge_graph(
+                nodes=nodes,
+                edges=edges,
+                file_name=file_name,
+                chapter_name=chapter_name,
+                section_title=sec_name,
+                main_entities=main_entities
+            )
 
-        # 2. SINH CÂU HỎI GIẢ ĐỊNH (REVERSE HyDE)
+        # =======================================================
+        # 3. UPSERT CURRICULUM INTO QDRANT
+        # =======================================================
+        for idx, step_data in enumerate(teaching_roadmap):
+            step_data["seq_id"] = idx
+            db.upsert_curriculum_group(
+                group_data=step_data,
+                parent_id=parent_id,
+                source_file=file_name,
+                chapter=chapter_name,
+                section=sec_name
+            )
+
+        print(f"    + Saved {len(teaching_roadmap)} Teaching Steps (Agent Queues).")
+
+        # =======================================================
+        # 4. UPSERT PARENT SECTION & HYPOTHETICAL QUESTIONS
+        # =======================================================
         questions = llm.generate_hypothetical_questions(full_section_text, num_questions=5)
-        print(f"    + Đã sinh {len(questions)} câu hỏi giả định.")
+        print(f"    + Generated {len(questions)} hypothetical questions.")
 
-        # 3. LƯU VÀO CSDL (TÁCH CHA CON)
+        # [UPDATED]: Store main_entities directly into parent metadata for advanced retrieval
         parent_metadata = {
             "source": file_name,
-            "Section": sec_name,
-            "anchor_nodes": ", ".join(list(section_anchors))
+            "section": sec_name,
+            "seq_id":section["metadata"]["seq_id"],
+            "anchor_nodes": ", ".join(list(section_anchors)),
+            "main_entities": ", ".join(main_entities)  # Injecting the entities here
         }
 
-        # Lưu vào bảng Cha
         db.upsert_section(full_section_text, parent_metadata, parent_id)
-        # Lưu vào bảng Con
         db.upsert_questions(questions, parent_id, file_name)
 
-    print("\n=== HOÀN TẤT NẠP DỮ LIỆU ===")
+        print(f"    + Saved Section Anchor mapping {len(main_entities)} Main Entities.")
+
+    print("\n=== DONE! ===")
