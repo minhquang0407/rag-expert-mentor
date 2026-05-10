@@ -12,7 +12,7 @@ from core.interfaces import IVectorStore, ILLMService
 # QDRANT VECTOR STORE MANAGER
 # ==========================================
 class QdrantVectorStore(IVectorStore):
-    def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "math_curriculum_v4"):
+    def __init__(self, host: str = "localhost", port: int = 6333, api_key: str = None, collection_name: str = "math_curriculum_v4"):
         """
         - Reason: To manage vector embeddings and handle collection initialization conflicts.
         - Function: Initializes the Qdrant client, embedding model, and robustly ensures required collections exist.
@@ -27,8 +27,11 @@ class QdrantVectorStore(IVectorStore):
         self.child_coll = f"{collection_name}_questions"
         self.memory_coll = "user_memory_v1"
 
-        # Connect to Qdrant
-        self.client = QdrantClient(host=host, port=port)
+        # Connect to Qdrant (Cloud or Local)
+        if host.startswith("http"):
+            self.client = QdrantClient(url=host, api_key=api_key)
+        else:
+            self.client = QdrantClient(host=host, port=port, api_key=api_key)
 
         # Extremely fast and lightweight local embedding model
         self.embed_model = FastEmbedEmbeddings(

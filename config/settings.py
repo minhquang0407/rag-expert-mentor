@@ -16,9 +16,15 @@ class Settings(BaseSettings):
     qa_top_p: float = Field(default=0.7)
     qa_max_token: int = Field(default=2048)
 
+    # API Keys for Cloud Deployment
+    groq_api_key: str = Field(default="")
+    google_api_key: str = Field(default="")
+    openai_api_key: str = Field(default="")
+
     # Qdrant Vector DB Configuration
     qdrant_host: str = Field(default="localhost")
     qdrant_port: int = Field(default=6333)
+    qdrant_api_key: str = Field(default="")
     vector_collection_name: str = Field(default="math_curriculum_v4")
 
     # Neo4j Graph DB Configuration

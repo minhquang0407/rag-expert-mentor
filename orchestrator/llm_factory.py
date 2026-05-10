@@ -18,11 +18,28 @@ class LLMFactory:
                 max_tokens=max_tokens,
                 **kwargs
             )
+        elif provider.lower() == "groq":
+            from langchain_groq import ChatGroq
+            return ChatGroq(
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
         elif provider.lower() == "openai":
-            # Abstracted for future implementation
-            raise NotImplementedError("OpenAI provider is prepared abstractly but not fully implemented.")
+            return ChatOpenAI(
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs
+            )
         elif provider.lower() == "gemini":
-            # Abstracted for future implementation
-            raise NotImplementedError("Gemini provider is prepared abstractly but not fully implemented.")
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(
+                model=model_name,
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+                **kwargs
+            )
         else:
             raise ValueError(f"Unsupported LLM provider: {provider}")
