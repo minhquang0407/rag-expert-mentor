@@ -17,6 +17,7 @@ class Container(containers.DeclarativeContainer):
         QdrantVectorStore,
         host=config.qdrant_host,
         port=config.qdrant_port,
+        api_key=config.qdrant_api_key,
         collection_name=config.vector_collection_name
     )
 
