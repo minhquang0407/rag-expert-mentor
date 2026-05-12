@@ -24,32 +24,34 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
-    time.sleep(0.2)
+    time.sleep(0.1)
 
-    st.write(f"DEBUG: db={type(db)}, llm={type(llm)}, dag={type(dag)}")
-    time.sleep(0.2)
+    try:
+        for i, section in enumerate(final_document):
+            st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---")
+            time.sleep(0.1)
+            
+            sec_name = section.get("metadata", {}).get("Section", "Unknown")
+            chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
+            
+            st.write(f"📝 **Processing Section {i+1}: {sec_name}**")
+            time.sleep(0.1)
+            
+            full_section_text = section.get("page_content","")
+            parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
 
-    for i, section in enumerate(final_document):
-        st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---")
-        time.sleep(0.1)
-        
-        sec_name = section.get("metadata", {}).get("Section", "Unknown")
-        chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
-        
-        st.write(f"📝 **Processing Section {i+1}: {sec_name}**")
-        time.sleep(0.1)
-        
-        full_section_text = section.get("page_content","")
-        parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
-
-        st.write("🤖 Calling LLM for Extraction (Backbone & Graph)...")
-        time.sleep(0.1)
-        # =======================================================
-        # 1. INVOKE SINGLE-PASS LLM EXTRACTION
-        # =======================================================
-        llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
-        st.write("✅ LLM returned data.")
-        time.sleep(0.1)
+            st.write("🤖 Calling LLM for Extraction (Backbone & Graph)...")
+            time.sleep(0.1)
+            # =======================================================
+            # 1. INVOKE SINGLE-PASS LLM EXTRACTION
+            # =======================================================
+            llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
+            st.write("✅ LLM returned data.")
+            time.sleep(0.1)
+    except Exception as inner_e:
+        st.error(f"❌ Internal Pipeline Error: {str(inner_e)}")
+        st.exception(inner_e)
+        st.stop()
 
         # [NEW]: Extract main entities from the parsed LLM response
         main_entities = llm_data.get("main_entities", [])
