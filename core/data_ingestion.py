@@ -24,12 +24,19 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
-    time.sleep(0.1)
+    time.sleep(0.2)
+
+    st.write(f"DEBUG: db={type(db)}, llm={type(llm)}, dag={type(dag)}")
+    time.sleep(0.2)
 
     for i, section in enumerate(final_document):
-        sec_name = section["metadata"]["Section"]
-        chapter_name = section["metadata"]["Chapter"]
-        st.write(f"📝 **Processing Section {i+1}: {sec_name}** ({len(section.get('page_content',''))} chars)")
+        st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---")
+        time.sleep(0.1)
+        
+        sec_name = section.get("metadata", {}).get("Section", "Unknown")
+        chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
+        
+        st.write(f"📝 **Processing Section {i+1}: {sec_name}**")
         time.sleep(0.1)
         
         full_section_text = section.get("page_content","")
