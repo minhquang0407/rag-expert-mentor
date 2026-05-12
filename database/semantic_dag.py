@@ -79,7 +79,7 @@ class Neo4jManager(IGraphStore):
                 SET c2.source_locators = CASE WHEN $loc IN coalesce(c2.source_locators, []) THEN c2.source_locators ELSE coalesce(c2.source_locators, []) + $loc END
 
                 WITH c1, c2
-                CALL apoc.create.relationship(c1, $rel, {{}}, c2) YIELD rel
+                CREATE (c1)-[rel:$(rel)]->(c2)
                 RETURN rel
                 """
                 session.run(cypher_query, source=source, target=target, rel=rel, loc=locator)
