@@ -109,39 +109,31 @@ with st.sidebar:
         else:
             st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
-                # Using st.status for persistent logging in the UI
-                with st.status(f"Ingesting '{file_name}'...", expanded=True) as status:
-                    try:
-                        st.write("🔍 Reading file content...")
-                        content = uploaded_file.getvalue().decode("utf-8")
+                try:
+                    st.info(f"🚀 Initializing Ingestion for {file_name}...")
+                    content = uploaded_file.getvalue().decode("utf-8")
+                    
+                    if not content:
+                        st.error("File content is empty!")
+                    else:
+                        st.write(f"📦 File read: {len(content)} characters. Calling Pipeline...")
                         
-                        if not content:
-                            st.error("File content is empty!")
-                            status.update(label="Ingestion Failed (Empty File)", state="error")
-                        else:
-                            st.write(f"📦 Processing {len(content)} characters...")
-                            
-                            # Run the pipeline
-                            run_ingestion_pipeline(
-                                content, file_name, 
-                                engine.vector_db, 
-                                engine.orchestrator.llm_service,
-                                engine.graph_db
-                            )
-                            
-                            st.write("✅ Ingestion completed successfully.")
-                            status.update(label="Ingestion Complete!", state="complete")
-                            
-                            st.success("Data ingested successfully! Reloading interface...")
-                            time.sleep(2)
-                            st.rerun()
-                            
-                    except Exception as e:
-                        st.error(f"❌ Ingestion Failed: {str(e)}")
-                        st.exception(e)
-                        status.update(label="Ingestion Failed", state="error")
-                        # Stop here so user can read the error
-                        st.stop()
+                        # Run the pipeline
+                        run_ingestion_pipeline(
+                            content, file_name, 
+                            engine.vector_db, 
+                            engine.orchestrator.llm_service,
+                            engine.graph_db
+                        )
+                        
+                        st.success("🎉 Data ingested successfully! Reloading interface...")
+                        time.sleep(2)
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"❌ CRITICAL ERROR during Ingestion: {str(e)}")
+                    st.exception(e)
+                    st.stop()
 
     if unique_sources:
         st.markdown("---")

@@ -8,12 +8,15 @@ import streamlit as st
 
 def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
     st.write("🛠️ Starting Ingestion Pipeline...")
+    time.sleep(0.1)
     processor = MathAwareDocumentProcessor()
     
     st.write("📂 Parsing structural hierarchy (Markdown Headers)...")
+    time.sleep(0.1)
     final_document, toc_tree = processor.process_markdown(markdown_content)
 
     st.write(f"📁 Creating TOC directories and saving {file_name}_toc.json...")
+    time.sleep(0.1)
     os.makedirs("./database/tocs", exist_ok=True)
     toc_path = f"./database/tocs/{file_name}_toc.json"
     with open(toc_path, "w", encoding="utf-8") as f:
@@ -21,21 +24,25 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
+    time.sleep(0.1)
 
     for i, section in enumerate(final_document):
         sec_name = section["metadata"]["Section"]
         chapter_name = section["metadata"]["Chapter"]
         st.write(f"📝 **Processing Section {i+1}: {sec_name}** ({len(section.get('page_content',''))} chars)")
+        time.sleep(0.1)
         
         full_section_text = section.get("page_content","")
         parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
 
         st.write("🤖 Calling LLM for Extraction (Backbone & Graph)...")
+        time.sleep(0.1)
         # =======================================================
         # 1. INVOKE SINGLE-PASS LLM EXTRACTION
         # =======================================================
         llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
         st.write("✅ LLM returned data.")
+        time.sleep(0.1)
 
         # [NEW]: Extract main entities from the parsed LLM response
         main_entities = llm_data.get("main_entities", [])
