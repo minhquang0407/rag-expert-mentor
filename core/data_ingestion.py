@@ -4,46 +4,38 @@ import hashlib
 from database.document_processor import MathAwareDocumentProcessor
 
 
+import streamlit as st
+
 def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
-    """
-    - Reason: To orchestrate the Ahead-Of-Time (AOT) ingestion process, converting raw markdown into searchable vector structures and knowledge graphs, now explicitly capturing main entities.
-    - Function: Chunks text, calls the local LLM to extract the roadmap, DAG, and main entities, and saves them to Qdrant & Neo4j with absolute locators.
-    - Usage: Called by the main application script when a user uploads or processes a new textbook.
-    - Parameters:
-        - markdown_content (str): The raw markdown text of the book.
-        - file_name (str): The name of the file (used for metadata tracking and ID generation).
-        - db (QdrantVectorStore): The vector database instance for storing embeddings.
-        - llm (LocalLLMService): The local LLM instance (Qwen 3.5).
-        - dag (SemanticDAG): The Neo4j graph database instance.
-    - Returns: None.
-    - Return Type: None
-    - Alternatives: Implementing an event-driven ingestion queue using Celery or Kafka for large scale document processing.
-    """
+    st.write("🛠️ Starting Ingestion Pipeline...")
     processor = MathAwareDocumentProcessor()
+    
+    st.write("📂 Parsing structural hierarchy (Markdown Headers)...")
     final_document, toc_tree = processor.process_markdown(markdown_content)
 
+    st.write(f"📁 Creating TOC directories and saving {file_name}_toc.json...")
     os.makedirs("./database/tocs", exist_ok=True)
     toc_path = f"./database/tocs/{file_name}_toc.json"
     with open(toc_path, "w", encoding="utf-8") as f:
         json.dump(toc_tree, f, ensure_ascii=False, indent=4)
-    print(f"[*] Saved TOC at {toc_path}")
 
     global_nodes_list = []
-    print("\n[START] Pipeline Ingestion: Entities, DAG, Curriculum & QA Generation...")
+    st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
 
-    for section in final_document:
+    for i, section in enumerate(final_document):
         sec_name = section["metadata"]["Section"]
-        print(f"\n -> Processing: {sec_name}")
-        full_section_text = section.get("page_content","")
-
         chapter_name = section["metadata"]["Chapter"]
-
+        st.write(f"📝 **Processing Section {i+1}: {sec_name}** ({len(section.get('page_content',''))} chars)")
+        
+        full_section_text = section.get("page_content","")
         parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
 
+        st.write("🤖 Calling LLM for Extraction (Backbone & Graph)...")
         # =======================================================
         # 1. INVOKE SINGLE-PASS LLM EXTRACTION
         # =======================================================
         llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
+        st.write("✅ LLM returned data.")
 
         # [NEW]: Extract main entities from the parsed LLM response
         main_entities = llm_data.get("main_entities", [])
