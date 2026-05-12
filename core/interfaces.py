@@ -52,6 +52,10 @@ class IVectorStore(ABC):
     def search_semantic_memory(self, user_id: str, query: str, limit: int = 5) -> List[Dict]:
         pass
 
+    @abstractmethod
+    def delete_source(self, source_name: str) -> None:
+        pass
+
 
 class IGraphStore(ABC):
     """Interface cho Cơ sở dữ liệu Đồ thị."""
@@ -94,4 +98,8 @@ class IGraphStore(ABC):
 
     @abstractmethod
     def get_raw_chat_turns_by_user(self, user_id: str) -> List[Dict]:
+        pass
+
+    @abstractmethod
+    def delete_source(self, source_name: str) -> None:
         pass

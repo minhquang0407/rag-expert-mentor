@@ -128,6 +128,25 @@ with st.sidebar:
                     import traceback
                     st.code(traceback.format_exc())
 
+    if unique_sources:
+        st.markdown("---")
+        st.header("🗑️ Manage Ingested Data")
+        source_to_delete = st.selectbox("Select file to remove:", options=["-- Select --"] + unique_sources)
+        if source_to_delete != "-- Select --":
+            if st.button(f"🔥 Permanently Delete '{source_to_delete}'", use_container_width=True, type="primary"):
+                with st.spinner(f"Deleting data for {source_to_delete}..."):
+                    try:
+                        # 1. Delete from Qdrant
+                        engine.vector_db.delete_source(source_to_delete)
+                        # 2. Delete from Neo4j
+                        engine.graph_db.delete_source(source_to_delete)
+                        
+                        st.success(f"Successfully deleted all data for '{source_to_delete}'")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error during deletion: {e}")
+
     st.markdown("---")
     st.header("📖 Learning Curriculum")
 
