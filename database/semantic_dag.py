@@ -79,10 +79,10 @@ class Neo4jManager(IGraphStore):
                 SET c2.source_locators = CASE WHEN $loc IN coalesce(c2.source_locators, []) THEN c2.source_locators ELSE coalesce(c2.source_locators, []) + $loc END
 
                 WITH c1, c2
-                CREATE (c1)-[rel:$(rel)]->(c2)
+                MERGE (c1)-[rel:{rel}]->(c2)
                 RETURN rel
                 """
-                session.run(cypher_query, source=source, target=target, rel=rel, loc=locator)
+                session.run(cypher_query, source=source, target=target, loc=locator)
 
     def mark_concept_as_learned(self, concept_id: str, user_id: str = "guest_01"):
         query = """
