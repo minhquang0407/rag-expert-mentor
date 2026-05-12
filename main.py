@@ -141,7 +141,10 @@ with st.sidebar:
                         engine.vector_db.delete_source(source_to_delete)
                         # 2. Delete from Neo4j
                         engine.graph_db.delete_source(source_to_delete)
-                        
+                        toc_path = os.path.join(current_dir, "database", "tocs", f"{source_to_delete}_toc.json")
+                        if os.path.exists(toc_path):
+                            os.remove(toc_path)
+                            print(f"[*] Deleted local TOC file: {toc_path}")
                         st.success(f"Successfully deleted all data for '{source_to_delete}'")
                         time.sleep(1)
                         st.rerun()

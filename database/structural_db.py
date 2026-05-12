@@ -62,6 +62,16 @@ class QdrantVectorStore(IVectorStore):
                 else:
                     print(f"[X] Critical error creating collection {coll}: {e}")
 
+                
+            try:
+                self.client.create_payload_index(
+                    collection_name=coll,
+                    field_name="source",
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
+
     def upsert_section(self, text: str, metadata: dict, parent_id: str) -> None:
         """
         - Reason: To store the macro-context of a textbook section.
