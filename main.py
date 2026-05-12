@@ -68,23 +68,31 @@ if "user_id" not in st.session_state:
 # 3. SIDEBAR - NAVIGATION & DATA INGESTION
 # ==========================================
 with st.sidebar:
-    st.header("🔐 Login")
-    user_input = st.text_input("Username (User ID):", value=st.session_state.user_id)
-
-    if user_input != st.session_state.user_id:
-        st.session_state.user_id = user_input
-        # Reload history from Neo4j when user changes
-        if user_input:
-            history = engine.graph_db.get_raw_chat_turns_by_user(user_input)
-            st.session_state.messages = []
-            for h in history:
-                st.session_state.messages.append({"role": "user", "content": h["query"], "mode": "GLOBAL_QA"})
-                st.session_state.messages.append({"role": "assistant", "content": h["answer"], "mode": "GLOBAL_QA"})
-            st.session_state.current_loaded_section = None
-            st.rerun()
-
-    st.markdown("---")
-    st.header("System Settings")
+    st.header("🔍 System Diagnostics")
+    if st.button("Run Connectivity Check", use_container_width=True):
+        with st.spinner("Checking connections..."):
+            # 1. Check Qdrant
+            try:
+                engine.vector_db.client.get_collections()
+                st.success("✅ Vector Cloud: Connected")
+            except Exception as e:
+                st.error(f"❌ Qdrant Cloud: {e}")
+            
+            # 2. Check Neo4j
+            try:
+                with engine.graph_db.driver.session() as session:
+                    session.run("RETURN 1")
+                st.success("✅ Graph Cloud: Connected")
+            except Exception as e:
+                st.error(f"❌ Neo4j AuraDB: {e}")
+            
+            # 3. Check DeepSeek (via ds2api)
+            try:
+                test_prompt = "Say 'OK'"
+                res = engine.orchestrator.llm_service.chat_llm.invoke(test_prompt)
+                st.success(f"✅ LLM API: Connected (Response: {res.content})")
+            except Exception as e:
+                st.error(f"❌ LLM API: {e}")
 
     st.markdown("---")
     st.header("Ingest Learning Data")
