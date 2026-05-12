@@ -7,8 +7,6 @@ class LLMFactory:
     """
     @staticmethod
     def create_llm(provider: str, model_name: str, base_url: str, temperature: float, max_tokens: int = 2048, top_p: float = 0.2, **kwargs) -> BaseChatModel:
-        import streamlit as st
-        st.write(f"🧪 LLMFactory: Creating model for provider '{provider}'...")
         
         # Capture internal keys before cleaning up kwargs
         openai_key = kwargs.get("openai_api_key", "not-needed")
