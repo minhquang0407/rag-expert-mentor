@@ -24,7 +24,6 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
-    time.sleep(0.1)
     st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---") 
     print("Starting Loop")
     for i, section in enumerate(final_document):
