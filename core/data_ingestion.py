@@ -14,9 +14,11 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
         st.write("📂 Đang phân tích cấu trúc tài liệu (Markdown Headers)...")
         final_document, toc_tree = processor.process_markdown(markdown_content)
 
-        st.write(f"📁 Đang tạo thư mục và lưu File mục lục: {file_name}_toc.json")
-        os.makedirs("./database/tocs", exist_ok=True)
-        toc_path = f"./database/tocs/{file_name}_toc.json"
+        st.write(f"📁 Đang lưu File mục lục: {file_name}_toc.json")
+        # Sử dụng /tmp để tránh lỗi Read-only trên Streamlit Cloud
+        toc_dir = "/tmp/database/tocs"
+        os.makedirs(toc_dir, exist_ok=True)
+        toc_path = f"{toc_dir}/{file_name}_toc.json"
         with open(toc_path, "w", encoding="utf-8") as f:
             json.dump(toc_tree, f, ensure_ascii=False, indent=4)
 

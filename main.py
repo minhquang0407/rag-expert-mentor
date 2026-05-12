@@ -126,41 +126,35 @@ with st.sidebar:
             st.success(f"'{file_name}' is already in the database.")
         else:
             st.warning(f"'{file_name}' is not in the database yet.")
-            # Use session state to keep ingestion alive even if Streamlit reruns
-            ingest_key = f"ingesting_{file_name}"
-            if ingest_key not in st.session_state:
-                st.session_state[ingest_key] = False
-
-            if not st.session_state[ingest_key]:
-                if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
-                    st.session_state[ingest_key] = True
-                    st.rerun()
-            
-            if st.session_state[ingest_key]:
+            if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
                 try:
                     from config.settings import settings
                     st.info(f"🚀 Initializing Ingestion (Provider: {settings.llm_provider}, Model: {settings.llm_model_name})")
+                    st.write(f"🔗 Qdrant Host: {settings.qdrant_host}, Neo4j: {settings.neo4j_uri}")
                     
                     content = uploaded_file.getvalue().decode("utf-8")
-                    st.write(f"📦 Processing {len(content)} characters...")
-
-                    # Run the pipeline
-                    run_ingestion_pipeline(
-                        content, file_name, 
-                        engine.vector_db, 
-                        engine.orchestrator.llm_service, 
-                        engine.graph_db
-                    )
                     
-                    st.success("🎉 Data ingested successfully! Reloading interface...")
-                    st.session_state[ingest_key] = False # Finish
-                    time.sleep(2)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Critical Pipeline Failure: {e}")
-                    st.session_state[ingest_key] = False # Error reset
-                    if st.button("Retry Ingestion"):
+                    if not content:
+                        st.error("File content is empty!")
+                    else:
+                        st.write(f"📦 File read: {len(content)} characters. Calling Pipeline...")
+                        
+                        # Run the pipeline
+                        run_ingestion_pipeline(
+                            content, file_name, 
+                            engine.vector_db, 
+                            engine.orchestrator.llm_service,
+                            engine.graph_db
+                        )
+                        
+                        st.success("🎉 Data ingested successfully! Reloading interface...")
+                        time.sleep(2)
                         st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"❌ CRITICAL ERROR during Ingestion: {str(e)}")
+                    st.exception(e)
+                    st.stop()
 
     if unique_sources:
         st.markdown("---")
