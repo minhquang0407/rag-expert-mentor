@@ -12,3 +12,4 @@ fastembed
 neo4j
 pydantic-settings
 dependency-injector
+streamlit-agraph
