@@ -100,5 +100,3 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
                 st.stop()
         
         status.update(label="✨ Đã nạp dữ liệu thành công!", state="complete", expanded=False)
-
-        print("\n=== DONE! ===")

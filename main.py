@@ -130,7 +130,6 @@ with st.sidebar:
                 try:
                     from config.settings import settings
                     st.info(f"🚀 Initializing Ingestion (Provider: {settings.llm_provider}, Model: {settings.llm_model_name})")
-                    st.write(f"🔗 Qdrant Host: {settings.qdrant_host}, Neo4j: {settings.neo4j_uri}")
                     
                     content = uploaded_file.getvalue().decode("utf-8")
                     
