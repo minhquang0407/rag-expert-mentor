@@ -247,6 +247,58 @@ class Neo4jManager(IGraphStore):
             print(f"[!] Neo4j get_visual_graph Error: {e}")
             return {"nodes": [], "edges": []}
 
+    def get_global_visual_graph(self, user_id: str, file_name: str) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        - Function: Fetches all concepts belonging to an entire file (all chapters/sections).
+        """
+        prefix = f"{file_name}::"
+        query = """
+        MATCH (c:Concept)
+        WHERE any(loc IN c.source_locators WHERE loc STARTS WITH $prefix)
+        OPTIONAL MATCH (c)-[r:PREREQUISITE_OF|RELATES_TO|PART_OF|DESCRIBES|VERSUS]->(other:Concept)
+        WHERE any(loc IN other.source_locators WHERE loc STARTS WITH $prefix)
+        OPTIONAL MATCH (u:User {id: $user_id})-[h:HAS_LEARNED]->(c)
+        RETURN 
+            c.id as id, 
+            c.description as description, 
+            c.type as type, 
+            c.is_main as is_main,
+            h IS NOT NULL as learned,
+            collect({target: other.id, type: type(r)}) as relations
+        """
+        nodes = []
+        edges = []
+        seen_edges = set()
+
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, prefix=prefix, user_id=user_id)
+                for record in result:
+                    nodes.append({
+                        "id": record["id"],
+                        "label": record["id"],
+                        "title": record["description"],
+                        "type": record["type"],
+                        "learned": record["learned"],
+                        "is_main": record["is_main"] or False
+                    })
+                    
+                    for rel in record["relations"]:
+                        if rel["target"]:
+                            edge_key = tuple(sorted([record["id"], rel["target"]])) + (rel["type"],)
+                            if edge_key not in seen_edges:
+                                edges.append({
+                                    "source": record["id"],
+                                    "target": rel["target"],
+                                    "label": rel["type"]
+                                })
+                                seen_edges.add(edge_key)
+                                
+                return {"nodes": nodes, "edges": edges}
+        except Exception as e:
+            print(f"[!] Neo4j get_global_visual_graph Error: {e}")
+            return {"nodes": [], "edges": []}
+
     def get_recent_history(self, user_id: str, limit: int = 5) -> List[Dict]:
         """Fetches the N most recent chat summaries for context window."""
         cypher = """

@@ -109,25 +109,39 @@ with st.sidebar:
         else:
             st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
-                try:
-                    with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
-                        # Dùng getvalue() an toàn hơn read() trong Streamlit
+                # Using st.status for persistent logging in the UI
+                with st.status(f"Ingesting '{file_name}'...", expanded=True) as status:
+                    try:
+                        st.write("🔍 Reading file content...")
                         content = uploaded_file.getvalue().decode("utf-8")
                         
                         if not content:
                             st.error("File content is empty!")
+                            status.update(label="Ingestion Failed (Empty File)", state="error")
                         else:
-                            st.info(f"Processing {len(content)} characters...")
-                            run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
-                                                engine.graph_db)
+                            st.write(f"📦 Processing {len(content)} characters...")
+                            
+                            # Run the pipeline
+                            run_ingestion_pipeline(
+                                content, file_name, 
+                                engine.vector_db, 
+                                engine.orchestrator.llm_service,
+                                engine.graph_db
+                            )
+                            
+                            st.write("✅ Ingestion completed successfully.")
+                            status.update(label="Ingestion Complete!", state="complete")
                             
                             st.success("Data ingested successfully! Reloading interface...")
-                            time.sleep(1)
+                            time.sleep(2)
                             st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Ingestion Failed: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                            
+                    except Exception as e:
+                        st.error(f"❌ Ingestion Failed: {str(e)}")
+                        st.exception(e)
+                        status.update(label="Ingestion Failed", state="error")
+                        # Stop here so user can read the error
+                        st.stop()
 
     if unique_sources:
         st.markdown("---")
@@ -294,13 +308,13 @@ with tab_learning:
             if local_q:
                 query_to_send = local_q
                 action_mode_to_send = "LOCAL_QA"
+        # --- SUB-TAB: KNOWLEDGE MAP ---
         with subtab_map:
-            st.markdown("### 🗺️ Concept Relationship Map")
-            st.caption("Visualizing prerequisites and related concepts. Green nodes indicate concepts you've already learned.")
+            st.markdown("### 🗺️ Global Knowledge Map")
+            st.caption(f"Visualizing all concepts and relations within '{st.session_state.target_file}'. Green nodes indicate concepts you've already learned.")
             
-            target_chapter = st.session_state.get("target_chapter", "")
-            locator = f"{st.session_state.target_file}::{target_chapter}::{st.session_state.target_section}"
-            graph_data = engine.graph_db.get_visual_graph(st.session_state.user_id, locator)
+            # Switch to Global Graph for the entire file
+            graph_data = engine.graph_db.get_global_visual_graph(st.session_state.user_id, st.session_state.target_file)
             
             if graph_data["nodes"]:
                 nodes = []
