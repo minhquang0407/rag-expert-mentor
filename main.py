@@ -110,7 +110,10 @@ with st.sidebar:
             st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
                 try:
-                    st.info(f"🚀 Initializing Ingestion for {file_name}...")
+                    from config.settings import settings
+                    st.info(f"🚀 Initializing Ingestion (Provider: {settings.llm_provider}, Model: {settings.llm_model_name})")
+                    st.write(f"🔗 Qdrant Host: {settings.qdrant_host}, Neo4j: {settings.neo4j_uri}")
+                    
                     content = uploaded_file.getvalue().decode("utf-8")
                     
                     if not content:
