@@ -17,6 +17,7 @@ if str(current_dir) not in sys.path:
 from core.container import Container
 from config.settings import settings
 from core.data_ingestion import run_ingestion_pipeline
+from streamlit_agraph import agraph, Node, Edge, Config
 
 
 # ==========================================
@@ -259,7 +260,7 @@ with tab_learning:
         st.subheader(f"{st.session_state.target_section}")
 
         # Split into 2 sub-tabs within Learning
-        subtab_learn, subtab_local_qa = st.tabs(["Lecture Progress", "Lesson Q&A"])
+        subtab_learn, subtab_local_qa, subtab_map = st.tabs(["Lecture Progress", "Lesson Q&A", "Knowledge Map"])
 
         # --- SUB-TAB: LECTURE PROGRESS ---
         with subtab_learn:
@@ -290,6 +291,50 @@ with tab_learning:
             if local_q:
                 query_to_send = local_q
                 action_mode_to_send = "LOCAL_QA"
+        with subtab_map:
+            st.markdown("### 🗺️ Concept Relationship Map")
+            st.caption("Visualizing prerequisites and related concepts. Green nodes indicate concepts you've already learned.")
+            
+            target_chapter = st.session_state.get("target_chapter", "")
+            locator = f"{st.session_state.target_file}::{target_chapter}::{st.session_state.target_section}"
+            graph_data = engine.graph_db.get_visual_graph(st.session_state.user_id, locator)
+            
+            if graph_data["nodes"]:
+                nodes = []
+                for n in graph_data["nodes"]:
+                    # Determine color based on status
+                    if n["learned"]:
+                        color = "#2ECC71" # Green
+                    elif n["is_main"]:
+                        color = "#E67E22" # Orange
+                    else:
+                        color = "#3498DB" # Blue
+                    
+                    nodes.append(Node(
+                        id=n["id"], 
+                        label=n["label"], 
+                        size=25 if n["is_main"] else 15,
+                        color=color,
+                        title=n["title"]
+                    ))
+                
+                edges = [Edge(source=e["source"], target=e["target"], label=e["label"]) for e in graph_data["edges"]]
+                
+                config = Config(
+                    width=700, 
+                    height=500, 
+                    directed=True, 
+                    physics=True, 
+                    hierarchical=False,
+                    # More customization
+                )
+                
+                return_value = agraph(nodes=nodes, edges=edges, config=config)
+                
+                if return_value:
+                    st.info(f"**Concept:** {return_value}")
+            else:
+                st.info("No concept graph data found for this section yet.")
 
     else:
         st.info("👈 Please select a lesson from the Sidebar to start the Learning Workspace.")
