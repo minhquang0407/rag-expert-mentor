@@ -24,10 +24,9 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
-    st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---") 
     print("Starting Loop")
     for i, section in enumerate(final_document):
-        
+        st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---") 
         try:
             sec_name = section.get("metadata", {}).get("Section", "Unknown")
             chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
