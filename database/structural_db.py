@@ -161,28 +161,33 @@ class QdrantVectorStore(IVectorStore):
         - Function: Retrieves pre-compiled roadmap steps.
         - Returns: Sorted list of teaching steps.
         """
-        query_filter = models.Filter(
-            must=[
-                models.FieldCondition(key="source", match=models.MatchValue(value=target_file)),
-                models.FieldCondition(key="section", match=models.MatchValue(value=target_section)),
-                models.FieldCondition(key="type", match=models.MatchValue(value="curriculum_group"))
-            ]
-        )
+        try:
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(key="source", match=models.MatchValue(value=target_file)),
+                    models.FieldCondition(key="section", match=models.MatchValue(value=target_section)),
+                    models.FieldCondition(key="type", match=models.MatchValue(value="curriculum_group"))
+                ]
+            )
 
-        records, _ = self.client.scroll(
-            collection_name=self.parent_coll,
-            scroll_filter=query_filter,
-            limit=100,
-            with_payload=True
-        )
+            records, _ = self.client.scroll(
+                collection_name=self.parent_coll,
+                scroll_filter=query_filter,
+                limit=100,
+                with_payload=True
+            )
 
-        groups = []
-        for r in records:
-            if "curriculum_data" in r.payload:
-                groups.append(r.payload["curriculum_data"])
+            groups = []
+            for r in records:
+                if r.payload and "curriculum_data" in r.payload:
+                    groups.append(r.payload["curriculum_data"])
 
-        groups.sort(key=lambda x: x.get("seq_id", 0))
-        return groups
+            groups.sort(key=lambda x: x.get("seq_id", 0))
+            return groups
+        except Exception as e:
+            print(f"[!] Qdrant Scroll Error: {str(e)}")
+            # Return empty list to prevent UI crash
+            return []
 
     def get_section_exact(self, target_file: str, target_section: str) -> List[Dict[str, Any]]:
         """
