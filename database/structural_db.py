@@ -31,7 +31,7 @@ class QdrantVectorStore(IVectorStore):
         if host.startswith("http"):
             self.client = QdrantClient(url=host, api_key=api_key)
         else:
-            self.client = QdrantClient(host=host, port=port, api_key=api_key)
+            self.client = QdrantClient(host=host, port=port, api_key=api_key if api_key else None, https=False)
 
         # Extremely fast and lightweight local embedding model
         self.embed_model = FastEmbedEmbeddings(
