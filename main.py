@@ -108,13 +108,44 @@ with st.sidebar:
         else:
             st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
-                with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
-                    content = uploaded_file.read().decode("utf-8")
-                    run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
-                                           engine.graph_db)
-                    st.success("Data ingested successfully! Reloading interface...")
-                    time.sleep(1)
-                    st.rerun()
+                try:
+                    with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
+                        # Dùng getvalue() an toàn hơn read() trong Streamlit
+                        content = uploaded_file.getvalue().decode("utf-8")
+                        
+                        if not content:
+                            st.error("File content is empty!")
+                        else:
+                            st.info(f"Processing {len(content)} characters...")
+                            run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
+                                                engine.graph_db)
+                            
+                            st.success("Data ingested successfully! Reloading interface...")
+                            time.sleep(1)
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Ingestion Failed: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+
+    if unique_sources:
+        st.markdown("---")
+        st.header("🗑️ Manage Ingested Data")
+        source_to_delete = st.selectbox("Select file to remove:", options=["-- Select --"] + unique_sources)
+        if source_to_delete != "-- Select --":
+            if st.button(f"🔥 Permanently Delete '{source_to_delete}'", use_container_width=True, type="primary"):
+                with st.spinner(f"Deleting data for {source_to_delete}..."):
+                    try:
+                        # 1. Delete from Qdrant
+                        engine.vector_db.delete_source(source_to_delete)
+                        # 2. Delete from Neo4j
+                        engine.graph_db.delete_source(source_to_delete)
+                        
+                        st.success(f"Successfully deleted all data for '{source_to_delete}'")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error during deletion: {e}")
 
     st.markdown("---")
     st.header("📖 Learning Curriculum")

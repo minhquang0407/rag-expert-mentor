@@ -79,7 +79,7 @@ class Neo4jManager(IGraphStore):
                 SET c2.source_locators = CASE WHEN $loc IN coalesce(c2.source_locators, []) THEN c2.source_locators ELSE coalesce(c2.source_locators, []) + $loc END
 
                 WITH c1, c2
-                CALL apoc.create.relationship(c1, $rel, {{}}, c2) YIELD rel
+                CREATE (c1)-[rel:$(rel)]->(c2)
                 RETURN rel
                 """
                 session.run(cypher_query, source=source, target=target, rel=rel, loc=locator)
@@ -280,3 +280,27 @@ class Neo4jManager(IGraphStore):
                                  limit=limit)
             # Reverse list to render oldest top, newest bottom
             return [{"query": r["query"], "answer": r["answer"]} for r in result][::-1]
+
+    def delete_source(self, source_name: str) -> None:
+        """
+        - Function: Removes all knowledge graph nodes and chat turns associated with a file.
+        """
+        with self.driver.session() as session:
+            # 1. Delete ChatTurns associated with this file
+            session.run("MATCH (t:ChatTurn {file: $source}) DETACH DELETE t", source=source_name)
+
+            # 2. Update Concepts: Remove locators from this file
+            # If after removal, source_locators is empty, the node is orphaned from this perspective.
+            session.run("""
+            MATCH (n:Concept)
+            WHERE any(loc IN n.source_locators WHERE loc STARTS WITH $prefix)
+            SET n.source_locators = [loc IN n.source_locators WHERE NOT loc STARTS WITH $prefix]
+            """, prefix=f"{source_name}::")
+
+            # 3. Delete Concepts that no longer have any source locators
+            session.run("""
+            MATCH (n:Concept)
+            WHERE size(n.source_locators) = 0
+            DETACH DELETE n
+            """)
+            print(f"[*] Cleaned up Neo4j for source: {source_name}")

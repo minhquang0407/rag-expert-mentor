@@ -28,6 +28,8 @@ class LLMFactory:
             )
         elif provider.lower() == "openai":
             return ChatOpenAI(
+                base_url=base_url if base_url else None,
+                api_key=kwargs.get("openai_api_key", "not-needed"),
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tokens,

@@ -286,3 +286,23 @@ class QdrantVectorStore(IVectorStore):
         results = response.points
 
         return [r.payload for r in results if hasattr(r, 'payload') and r.payload]
+
+    def delete_source(self, source_name: str) -> None:
+        """
+        - Function: Deletes all points associated with a specific source file across collections.
+        """
+        delete_filter = models.Filter(
+            must=[
+                models.FieldCondition(key="source", match=models.MatchValue(value=source_name))
+            ]
+        )
+        
+        for coll in [self.parent_coll, self.child_coll]:
+            try:
+                self.client.delete(
+                    collection_name=coll,
+                    points_selector=models.FilterSelector(filter=delete_filter)
+                )
+                print(f"[*] Deleted records for {source_name} from {coll}")
+            except Exception as e:
+                print(f"[!] Error deleting {source_name} from {coll}: {e}")
