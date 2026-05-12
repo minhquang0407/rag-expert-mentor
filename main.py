@@ -108,13 +108,25 @@ with st.sidebar:
         else:
             st.warning(f"'{file_name}' is not in the database yet.")
             if st.button(f"📥 Start ingesting '{file_name}'", use_container_width=True):
-                with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
-                    content = uploaded_file.read().decode("utf-8")
-                    run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
-                                           engine.graph_db)
-                    st.success("Data ingested successfully! Reloading interface...")
-                    time.sleep(1)
-                    st.rerun()
+                try:
+                    with st.spinner("Extracting Backbone and Knowledge Graph (Single-Pass)..."):
+                        # Dùng getvalue() an toàn hơn read() trong Streamlit
+                        content = uploaded_file.getvalue().decode("utf-8")
+                        
+                        if not content:
+                            st.error("File content is empty!")
+                        else:
+                            st.info(f"Processing {len(content)} characters...")
+                            run_ingestion_pipeline(content, file_name, engine.vector_db, engine.orchestrator.llm_service,
+                                                engine.graph_db)
+                            
+                            st.success("Data ingested successfully! Reloading interface...")
+                            time.sleep(1)
+                            st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Ingestion Failed: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
     st.markdown("---")
     st.header("📖 Learning Curriculum")
