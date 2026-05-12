@@ -25,10 +25,11 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
     global_nodes_list = []
     st.write(f"🚀 Found {len(final_document)} sections. Starting LLM analysis loop...")
     time.sleep(0.1)
-
+    st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---") 
+    print("Starting Loop")
     for i, section in enumerate(final_document):
+        
         try:
-            st.write(f"--- 🔄 Loop Start: Iteration {i+1} ---")            
             sec_name = section.get("metadata", {}).get("Section", "Unknown")
             chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
             
@@ -115,7 +116,7 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
 
             print(f"    + Saved Section Anchor mapping {len(main_entities)} Main Entities.")
         except Exception as inner_e:
-            st.error(f"❌ Internal Pipeline Error: {str(inner_e)}")
+            st.error(f"❌ Section {i+1} Error: {str(inner_e)} on section {sec_name}.")
             st.exception(inner_e)
             st.stop()
 
