@@ -74,7 +74,7 @@ with st.sidebar:
             # 1. Check Qdrant
             try:
                 engine.vector_db.client.get_collections()
-                st.success("✅ Vector Cloud: Connected")
+                st.success("✅ Qdrant Cloud: Connected")
             except Exception as e:
                 st.error(f"❌ Qdrant Cloud: {e}")
             
@@ -82,17 +82,27 @@ with st.sidebar:
             try:
                 with engine.graph_db.driver.session() as session:
                     session.run("RETURN 1")
-                st.success("✅ Graph Cloud: Connected")
+                st.success("✅ Neo4j AuraDB: Connected")
             except Exception as e:
                 st.error(f"❌ Neo4j AuraDB: {e}")
             
-            # 3. Check DeepSeek (via ds2api)
+            # 3. Check Learning/Chat LLM
             try:
                 test_prompt = "Say 'OK'"
                 res = engine.orchestrator.llm_service.chat_llm.invoke(test_prompt)
-                st.success(f"✅ LLM API: Connected (Response: {res.content})")
+                st.success(f"✅ Chat LLM: Connected (Response: {res.content})")
             except Exception as e:
-                st.error(f"❌ LLM API: {e}")
+                st.error(f"❌ Chat LLM: {e}")
+            
+            # 4. Check Ingestion LLM (JSON Mode test)
+            try:
+                st.info("Testing Ingestion LLM (JSON Mode)...")
+                test_json_prompt = "Output a JSON with a field 'status' set to 'ready'"
+                # Ingestion LLM is stored in llm_service.llm
+                res_json = engine.orchestrator.llm_service.llm.invoke(test_json_prompt)
+                st.success(f"✅ Ingestion LLM: Connected (Response: {res_json.content})")
+            except Exception as e:
+                st.warning(f"⚠️ Ingestion LLM (JSON Mode) failed: {e}. I will try to auto-fix this if you proceed.")
 
     st.markdown("---")
     st.header("Ingest Learning Data")
