@@ -38,6 +38,8 @@ class Container(containers.DeclarativeContainer):
         max_tokens=config.ingestion_max_token,
         top_p=config.ingestion_top_p,
         openai_api_key=config.openai_api_key,
+        groq_api_key=config.groq_api_key,
+        google_api_key=config.google_api_key,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
 
@@ -50,6 +52,8 @@ class Container(containers.DeclarativeContainer):
         max_tokens=config.learning_max_token,
         top_p=config.learning_top_p,
         openai_api_key=config.openai_api_key,
+        groq_api_key=config.groq_api_key,
+        google_api_key=config.google_api_key,
     )
 
     qa_llm = providers.Singleton(
@@ -61,6 +65,8 @@ class Container(containers.DeclarativeContainer):
         max_tokens=config.qa_max_token,
         top_p=config.qa_top_p,
         openai_api_key=config.openai_api_key,
+        groq_api_key=config.groq_api_key,
+        google_api_key=config.google_api_key,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
 
