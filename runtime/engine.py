@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Dict, Any, Optional
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -96,6 +97,10 @@ class SupportAgent:
         try:
             response = self.llm.invoke(_input, max_tokens=2048)
             content = response.content.strip()
+            
+            # Remove <think> blocks before processing
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+            
             start = content.find('{')
             end = content.rfind('}')
             

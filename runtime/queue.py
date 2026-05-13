@@ -22,6 +22,13 @@ class QueueOrchestrator:
         self.llm_service = llm_service
         self.state = None
 
+    def _clean_think_tags(self, text: str) -> str:
+        """
+        - Reason: reasoning models output thoughts in <think> tags.
+        - Function: Removes everything between <think> and </think> inclusive.
+        """
+        return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
     def initialize_state(self, step_id: str, macro_context: str, graph_context: str = ""):
         """
         - Reason: To reset or initialize the partitioned memory (scratchpads) for a new teaching step.
@@ -89,11 +96,30 @@ class QueueOrchestrator:
         
         buffer = ""
         is_first_phase = True
+        in_think_block = False
         
         try:
             for chunk in self.llm_service.chat_llm.stream(_input):
                 content = chunk.content
                 
+                # Handle <think> blocks (DeepSeek-R1 style)
+                if "<think>" in content:
+                    in_think_block = True
+                    # If there's text before <think>, keep it
+                    content = content.split("<think>")[0]
+                
+                if in_think_block:
+                    if "</think>" in content:
+                        in_think_block = False
+                        # Only keep text AFTER </think>
+                        content = content.split("</think>")[-1]
+                    else:
+                        # Skip this chunk entirely while inside think block
+                        continue
+
+                if not content:
+                    continue
+
                 if is_first_phase:
                     buffer += content
                     if "\n" in buffer or len(buffer) > 15:
@@ -319,7 +345,8 @@ class QueueOrchestrator:
         
         try:
             raw_response = self.llm_service.chat_llm.invoke(_input)
-            compressed_thought = raw_response.content.strip()
+            content = raw_response.content.strip()
+            compressed_thought = self._clean_think_tags(content)
             self.state.global_summary += f"[{agent_role.upper()}]: {compressed_thought}\n"
         except Exception as e:
             print(f"[!] Summarization Error: {e}")
