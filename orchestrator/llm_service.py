@@ -80,15 +80,17 @@ class LLMService(ILLMService):
         if match:
             return match.group(1)
 
-        start_idx = text.find('{')
-        end_idx = text.rfind('}')
-        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-            return text[start_idx:end_idx + 1]
-
+        # Prioritize Arrays [] for lists like Quizzes
         start_idx_arr = text.find('[')
         end_idx_arr = text.rfind(']')
         if start_idx_arr != -1 and end_idx_arr != -1 and end_idx_arr > start_idx_arr:
             return text[start_idx_arr:end_idx_arr + 1]
+
+        # Then fallback to Objects {}
+        start_idx = text.find('{')
+        end_idx = text.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            return text[start_idx:end_idx + 1]
 
         return text
 
@@ -242,14 +244,16 @@ class LLMService(ILLMService):
         3. The answer_idx must be an integer (0-3).
         
         ### FORMAT:
-        [
-            {{
-                "question": "Question text here...",
-                "options": ["Option 0", "Option 1", "Option 2", "Option 3"],
-                "answer_idx": 0,
-                "explanation": "Brief explanation here..."
-            }}
-        ]
+        {{
+            "quiz": [
+                {{
+                    "question": "Question text here...",
+                    "options": ["Option 0", "Option 1", "Option 2", "Option 3"],
+                    "answer_idx": 0,
+                    "explanation": "Brief explanation here..."
+                }}
+            ]
+        }}
         """
         try:
             raw_response = self.llm.invoke(prompt)
@@ -258,16 +262,16 @@ class LLMService(ILLMService):
             # Use the robust helper to extract JSON
             clean_json_str = self._extract_json_from_text(content)
             
-            # Simple cleanup for common LLM JSON mistakes
-            clean_json_str = clean_json_str.replace('\n', ' ').replace('\r', '')
-            
             try:
-                quiz_data = json.loads(clean_json_str)
+                data = json.loads(clean_json_str)
+                # Handle both dict-wrapped-list and direct list for robustness
+                quiz_data = data.get("quiz", []) if isinstance(data, dict) else data
+                
                 if isinstance(quiz_data, list) and len(quiz_data) > 0:
                     return quiz_data, None
-                return [], f"AI returned invalid list format. Snippet: {content[:100]}"
+                return [], f"AI returned invalid format. Raw snippet: {content[:150]}"
             except json.JSONDecodeError as je:
-                return [], f"JSON Parse Error at char {je.pos}. Content start: {clean_json_str[:150]}"
+                return [], f"JSON Error at char {je.pos}. Tried to parse: {clean_json_str[:200]}"
         except Exception as e:
             return [], f"LLM Invocation Error: {str(e)}"
 
