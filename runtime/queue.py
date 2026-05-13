@@ -49,11 +49,11 @@ class QueueOrchestrator:
         raw_queue = step_data.get("required_agents", ["concept", "example"])
         agent_queue = deque(raw_queue)
 
-        yield {"type": "status", "message": f"⚙️ Đã thiết lập hàng đợi chuyên gia: {list(agent_queue)}"}
+        yield {"type": "status", "message": f"⚙️ Agent Queue established: {list(agent_queue)}"}
 
         while agent_queue:
             current_agent = agent_queue.popleft()
-            yield {"type": "status", "message": f"🧠 Chuyên gia [{current_agent.upper()}] đang phân tích Đồ thị và Ngữ cảnh..."}
+            yield {"type": "status", "message": f"🧠 Expert [{current_agent.upper()}] is analyzing Graph and Context..."}
             yield {"type": "agent_start", "agent": current_agent}
 
             lecture_content = ""
@@ -70,7 +70,7 @@ class QueueOrchestrator:
             elif current_agent == "algorithm": self.state.algorithm_scratchpad.append(lecture_content)
             else: self.state.dynamic_scratchpad.append(lecture_content)
 
-            yield {"type": "status", "message": f"📝 Đang tóm tắt ý chính của [{current_agent.upper()}] vào Bộ nhớ Toàn cục..."}
+            yield {"type": "status", "message": f"📝 Summarizing [{current_agent.upper()}]'s key points into Global Memory..."}
             self._update_global_summary(current_agent, lecture_content)
 
     def mutate_queue(self, target_queue: deque, new_agents: List[str]):

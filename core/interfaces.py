@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
 class ILLMService(ABC):
-    """Interface tiêu chuẩn cho dịch vụ LLM (Trích xuất & Hỏi đáp)."""
+    """Standard interface for LLM services (Extraction & Q&A)."""
 
     @abstractmethod
     def extract_section_curriculum_and_dag(self, section_text: str, existing_nodes: List[str] = None) -> Dict[str, Any]:
@@ -18,7 +18,7 @@ class ILLMService(ABC):
 
 
 class IVectorStore(ABC):
-    """Interface cho Cơ sở dữ liệu Vector."""
+    """Interface for Vector Database."""
 
     @abstractmethod
     def upsert_section(self, text: str, metadata: dict, parent_id: str) -> None:
@@ -58,7 +58,7 @@ class IVectorStore(ABC):
 
 
 class IGraphStore(ABC):
-    """Interface cho Cơ sở dữ liệu Đồ thị."""
+    """Interface for Graph Database."""
 
     @abstractmethod
     def save_knowledge_graph(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str, main_entities: List[str]):

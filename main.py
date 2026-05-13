@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-# Lấy đường dẫn tuyệt đối của thư mục chứa file
+# Get the absolute path of the directory containing this file
 current_dir = Path(__file__).parent.resolve()
 import sys
 
@@ -50,7 +50,7 @@ if "thread_id" not in st.session_state:
 if "user_id" not in st.session_state:
     st.session_state.user_id = "guest_01"
 if "messages" not in st.session_state:
-    # Format mới: {"role": "user/assistant", "content": "...", "mode": "LEARNING/LOCAL_QA/GLOBAL_QA"}
+    # New format: {"role": "user/assistant", "content": "...", "mode": "LEARNING/LOCAL_QA/GLOBAL_QA"}
     st.session_state.messages = []
 if "target_file" not in st.session_state:
     st.session_state.target_file = ""
@@ -63,7 +63,6 @@ if "entity_groups" not in st.session_state:
 if "current_seq_idx" not in st.session_state:
     st.session_state.current_seq_idx = 0
 if "user_id" not in st.session_state:
-    # Streamlit >= 1.30 uses st.query_params
     st.session_state.user_id = st.query_params.get("user", "guest_01")
     st.session_state.current_loaded_section = None
 

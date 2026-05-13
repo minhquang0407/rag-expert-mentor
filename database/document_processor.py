@@ -33,7 +33,7 @@ class MathAwareDocumentProcessor:
         global_seq_id = 0
 
         for split in splits:
-            # --- RÚT TRÍCH MỤC LỤC (TOC) LÝ TƯỞNG ---
+            # --- IDEAL TABLE OF CONTENTS (TOC) EXTRACTION ---
             chapter = split.metadata.get("Chapter", "General Chapter: Introduction")
             section = split.metadata.get("Section", "General Section: Introduction")
 
@@ -53,5 +53,5 @@ class MathAwareDocumentProcessor:
             })
             global_seq_id += 1
 
-        print(f"[*] Đã bóc tách thành công {len(final_documents)} Sections và xây dựng Cây mục lục.")
+        print(f"[*] Successfully extracted {len(final_documents)} Sections and built the TOC tree.")
         return final_documents, toc

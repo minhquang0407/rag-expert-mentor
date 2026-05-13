@@ -51,7 +51,7 @@ class QdrantVectorStore(IVectorStore):
                     print(f"[*] Creating new collection: {coll}")
                     self.client.create_collection(
                         collection_name=coll,
-                        # [FIXED]: Khai báo vectors_config dưới dạng dictionary để tạo Named Vector từ đầu
+                        # [FIXED]: Declare vectors_config as a dictionary to create Named Vector from scratch
                         vectors_config={self.vector_name: VectorParams(size=384, distance=Distance.COSINE)},
                     )
                 
@@ -63,7 +63,7 @@ class QdrantVectorStore(IVectorStore):
                             field_schema=models.PayloadSchemaType.KEYWORD
                         )
                     except Exception:
-                        pass # Index đã tồn tại hoặc đang được tạo
+                        pass # Index already exists or is being created
 
             except Exception as e:
                 # If "File exists" error occurs, it means the directory is there but Qdrant was confused.

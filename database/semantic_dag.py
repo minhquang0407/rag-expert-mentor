@@ -6,7 +6,7 @@ from core.interfaces import IGraphStore
 
 class Neo4jManager(IGraphStore):
     """
-    - Lí do tại sao dùng: Quản lý Đồ thị Tri thức toàn cục, giải quyết triệt để lỗi ghi đè dữ liệu khi nhiều sách có cùng tên Section.
+    - Reason for use: Manages the Global Knowledge Graph, effectively solving the issue of data overwriting when multiple books have the same Section name.
     """
 
     def __init__(self, uri: str, user: str, password: str):
@@ -18,7 +18,7 @@ class Neo4jManager(IGraphStore):
             self.driver.verify_connectivity()
             self._initialize_user()
         except Exception as e:
-            print(f"[Neo4j] ❌ Lỗi kết nối: {e}")
+            print(f"[Neo4j] ❌ Connection Error: {e}")
 
     def close(self):
         if self.driver:
@@ -26,7 +26,7 @@ class Neo4jManager(IGraphStore):
 
     def _initialize_user(self, user_id: str = "guest_01"):
         query = "MERGE (u:User {id: $user_id}) RETURN u"
-        # Đăng ký kiểu quan hệ HAS_LEARNED để tránh cảnh báo "Relationship type does not exist"
+        # Register HAS_LEARNED relationship type to avoid "Relationship type does not exist" warnings
         init_rel_query = """
         MERGE (u:User {id: '_internal_init'})
         MERGE (c:Concept {id: '_internal_init'})
@@ -40,7 +40,7 @@ class Neo4jManager(IGraphStore):
     def save_knowledge_graph(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str,
                             main_entities: List[str]):
         """
-        - Chức năng: Lưu Graph (bao gồm Node có type và Edge có relation). Tạo chuỗi định vị tuyệt đối.
+        - Function: Saves Graph (including Nodes with types and Edges with relations). Creates absolute positioning locators.
         """
         allowed_relations = {"PREREQUISITE_OF", "RELATES_TO", "PART_OF", "DESCRIBES", "VERSUS"}
 
@@ -110,7 +110,7 @@ class Neo4jManager(IGraphStore):
         with self.driver.session() as session:
             session.run(query_turns, user_id=user_id)
             session.run(query_learned, user_id=user_id)
-            print(f"[Neo4j] Removed all about: {user_id}")
+            print(f"[Neo4j] ✅ Successfully reset data for user: {user_id}")
 
     def get_unlearned_prerequisites(self, target_concept: str, max_depth: int = 2, user_id: str = "guest_01") -> List[
         str]:

@@ -9,7 +9,7 @@ import streamlit as st
 def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
     processor = MathAwareDocumentProcessor()
     
-    # 1. Khởi tạo khung trạng thái
+    # 1. Initialize status framework
     with st.status("Processing learning data...", expanded=True) as status:
         status.update(label="Analyzing document structure (Markdown Headers)...")
         final_document, toc_tree = processor.process_markdown(markdown_content)

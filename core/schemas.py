@@ -3,13 +3,13 @@ from typing import List, Optional
 
 
 class TeachingStep(BaseModel):
-    step_id: str = Field(description="ID duy nhất của bước dạy")
-    step_title: str = Field(description="Tiêu đề bước dạy")
-    content_focus: str = Field(description="Nội dung trọng tâm (Text thô từ sách)")
+    step_id: str = Field(description="Unique ID for the teaching step")
+    step_title: str = Field(description="Title of the teaching step")
+    content_focus: str = Field(description="Focus content (Raw text from the book)")
 
-    # Mảng Hàng đợi Tác tử mà LLM khâu Ingestion đã quyết định
+    # Array of Agent Queues decided by the Ingestion LLM
     required_agents: List[str] = Field(
-        description="Danh sách thứ tự các chuyên gia giảng dạy. Chỉ chọn từ: ['concept', 'formula', 'math', 'algorithm', 'example', 'dynamic:<role>']."
+        description="Ordered list of teaching experts. Choose only from: ['concept', 'formula', 'math', 'algorithm', 'example', 'dynamic:<role>']."
     )
 
 
