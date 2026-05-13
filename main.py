@@ -55,6 +55,8 @@ if "target_file" not in st.session_state:
     st.session_state.target_file = ""
 if "target_section" not in st.session_state:
     st.session_state.target_section = ""
+if "target_chapter" not in st.session_state:
+    st.session_state.target_chapter = ""
 if "entity_groups" not in st.session_state:
     st.session_state.entity_groups = []
 if "current_seq_idx" not in st.session_state:
@@ -209,6 +211,7 @@ with st.sidebar:
                         for sec in sections:
                             if st.button(f"📄 {sec}", key=f"btn_{selected_file}_{sec}"):
                                 st.session_state.target_section = sec
+                                st.session_state.target_chapter = chapter
                                 
                                 # [FIXED]: Don't clear messages directly. Set flag to trigger Lazy Loading from Neo4j
                                 st.session_state.current_loaded_section = None 
@@ -279,13 +282,57 @@ def _sync_section_history():
 _sync_section_history()
 
 # ==========================================
+# 3.8 GRAPH VISUALIZATION HELPER
+# ==========================================
+def render_knowledge_graph(engine, user_id, chapter_name=None, file_name=None):
+    """Helper to render graph using agraph for either a specific chapter or an entire file."""
+    if chapter_name and file_name:
+        st.markdown(f"### 📍 Chapter Graph: {chapter_name}")
+        st.caption(f"Visualizing concepts and relations within the chapter '{chapter_name}'.")
+        graph_data = engine.graph_db.get_chapter_visual_graph(user_id, file_name, chapter_name)
+    elif file_name:
+        st.markdown(f"### 🗺️ Global Knowledge Map: {file_name}")
+        st.caption(f"Visualizing all concepts within '{file_name}'. Green nodes are learned.")
+        graph_data = engine.graph_db.get_global_visual_graph(user_id, file_name)
+    else:
+        st.info("No source provided for graph rendering.")
+        return
+
+    if graph_data["nodes"]:
+        nodes = []
+        for n in graph_data["nodes"]:
+            if n["learned"]:
+                color = "#2ECC71" # Green
+            elif n["is_main"]:
+                color = "#E67E22" # Orange
+            else:
+                color = "#3498DB" # Blue
+            
+            nodes.append(Node(
+                id=n["id"], 
+                label=n["label"], 
+                size=25 if n["is_main"] else 15,
+                color=color,
+                title=n["title"]
+            ))
+        
+        edges = [Edge(source=e["source"], target=e["target"], label=e["label"]) for e in graph_data["edges"]]
+        config = Config(width=800, height=600, directed=True, physics=True, hierarchical=False)
+        
+        return_value = agraph(nodes=nodes, edges=edges, config=config)
+        if return_value:
+            st.info(f"**Concept:** {return_value}")
+    else:
+        st.info("No graph data found for this view.")
+
+# ==========================================
 # 4. MAIN DISPLAY AREA & TABS
 # ==========================================
 st.title("AI Professor - Multi-System Expert")
 st.caption("Multi-Agent Queue Architecture with Local/Global QA Routing.")
 
-# Split into 2 main workspaces
-tab_learning, tab_global_qa = st.tabs(["Learning Workspace", "Global Q&A"])
+# Split into 3 main workspaces
+tab_learning, tab_map, tab_global_qa = st.tabs(["Learning Workspace", "Knowledge Map", "Global Q&A"])
 
 query_to_send = None
 action_mode_to_send = None
@@ -297,8 +344,8 @@ with tab_learning:
     if st.session_state.target_section and st.session_state.entity_groups:
         st.subheader(f"{st.session_state.target_section}")
 
-        # Split into 2 sub-tabs within Learning
-        subtab_learn, subtab_local_qa, subtab_map = st.tabs(["Lecture Progress", "Lesson Q&A", "Knowledge Map"])
+        # Split into 3 sub-tabs within Learning
+        subtab_learn, subtab_local_qa, subtab_local_graph = st.tabs(["Lecture Progress", "Lesson Q&A", "Local Graph"])
 
         # --- SUB-TAB: LECTURE PROGRESS ---
         with subtab_learn:
@@ -329,53 +376,27 @@ with tab_learning:
             if local_q:
                 query_to_send = local_q
                 action_mode_to_send = "LOCAL_QA"
-        # --- SUB-TAB: KNOWLEDGE MAP ---
-        with subtab_map:
-            st.markdown("### 🗺️ Global Knowledge Map")
-            st.caption(f"Visualizing all concepts and relations within '{st.session_state.target_file}'. Green nodes indicate concepts you've already learned.")
-            
-            # Switch to Global Graph for the entire file
-            graph_data = engine.graph_db.get_global_visual_graph(st.session_state.user_id, st.session_state.target_file)
-            
-            if graph_data["nodes"]:
-                nodes = []
-                for n in graph_data["nodes"]:
-                    # Determine color based on status
-                    if n["learned"]:
-                        color = "#2ECC71" # Green
-                    elif n["is_main"]:
-                        color = "#E67E22" # Orange
-                    else:
-                        color = "#3498DB" # Blue
-                    
-                    nodes.append(Node(
-                        id=n["id"], 
-                        label=n["label"], 
-                        size=25 if n["is_main"] else 15,
-                        color=color,
-                        title=n["title"]
-                    ))
-                
-                edges = [Edge(source=e["source"], target=e["target"], label=e["label"]) for e in graph_data["edges"]]
-                
-                config = Config(
-                    width=700, 
-                    height=500, 
-                    directed=True, 
-                    physics=True, 
-                    hierarchical=False,
-                    # More customization
-                )
-                
-                return_value = agraph(nodes=nodes, edges=edges, config=config)
-                
-                if return_value:
-                    st.info(f"**Concept:** {return_value}")
+
+        # --- SUB-TAB: LOCAL GRAPH ---
+        with subtab_local_graph:
+            if st.session_state.target_chapter and st.session_state.target_file:
+                render_knowledge_graph(engine, st.session_state.user_id, 
+                                        chapter_name=st.session_state.target_chapter, 
+                                        file_name=st.session_state.target_file)
             else:
-                st.info("No concept graph data found for this section yet.")
+                st.warning("Please select a lesson to view its chapter graph.")
 
     else:
         st.info("👈 Please select a lesson from the Sidebar to start the Learning Workspace.")
+
+# ==========================================
+# WORKSPACE 2: KNOWLEDGE MAP (GLOBAL)
+# ==========================================
+with tab_map:
+    if st.session_state.target_file:
+        render_knowledge_graph(engine, st.session_state.user_id, file_name=st.session_state.target_file)
+    else:
+        st.info("👈 Please select or upload a subject in the Sidebar to view the Global Map.")
 
 # ==========================================
 # WORKSPACE 2: GLOBAL Q&A
