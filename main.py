@@ -427,12 +427,12 @@ with tab_learning:
             if quiz_key not in st.session_state:
                 if st.button("✨ Generate AI Live Quiz", use_container_width=True):
                     with st.spinner("AI is reading the lesson and preparing questions..."):
-                        quiz = engine.get_lesson_quiz(st.session_state.target_file, st.session_state.target_section)
+                        quiz, err = engine.get_lesson_quiz(st.session_state.target_file, st.session_state.target_section)
                         if quiz:
                             st.session_state[quiz_key] = quiz
                             st.rerun()
                         else:
-                            st.error("Could not find lesson content to generate quiz.")
+                            st.error(err if err else "Could not generate quiz.")
             
             if quiz_key in st.session_state:
                 quiz = st.session_state[quiz_key]
@@ -495,12 +495,12 @@ with tab_briefing:
         if briefing_key not in st.session_state:
             if st.button("✨ Generate Source Briefing", use_container_width=True):
                 with st.spinner("Reading every page of your document to ensure 100% accuracy..."):
-                    briefing = engine.get_source_briefing(st.session_state.target_file)
+                    briefing, err = engine.get_source_briefing(st.session_state.target_file)
                     if briefing:
                         st.session_state[briefing_key] = briefing
                         st.rerun()
                     else:
-                        st.error("No content found in database. Please ingest the document first.")
+                        st.error(err if err else "Could not generate briefing.")
         
         if briefing_key in st.session_state:
             b = st.session_state[briefing_key]

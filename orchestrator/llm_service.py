@@ -247,8 +247,19 @@ class LLMService(ILLMService):
         try:
             raw_response = self.llm.invoke(prompt)
             content = raw_response.content
+            
+            # Use the robust helper to extract JSON
             clean_json_str = self._extract_json_from_text(content)
-            return json.loads(clean_json_str)
+            
+            try:
+                quiz_data = json.loads(clean_json_str)
+                # Validation: Ensure it's a list
+                if isinstance(quiz_data, list):
+                    return quiz_data
+                return []
+            except json.JSONDecodeError:
+                print(f"[!] JSON Decode Error in generate_quiz. RAW CONTENT:\n{content}")
+                return []
         except Exception as e:
             print(f"[!] LLM generate_quiz error: {e}")
             return []

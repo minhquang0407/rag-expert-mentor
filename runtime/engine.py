@@ -313,23 +313,39 @@ class RuntimeEngine:
 
             return answer
 
-    def get_lesson_quiz(self, target_file: str, target_section: str) -> List[Dict]:
+    def get_lesson_quiz(self, target_file: str, target_section: str) -> tuple[List[Dict], Optional[str]]:
         """
         - Logic: Fetches exact section text and generates MCQ quiz.
+        - Returns: (Quiz List, Error Message)
         """
         section_data = self.vector_db.get_section_exact(target_file, target_section)
-        if section_data:
-            full_text = section_data[0]["page_content"]
-            return self.orchestrator.llm_service.generate_quiz(full_text)
-        return []
+        if not section_data:
+            return [], "Lesson content not found in database."
+            
+        full_text = section_data[0]["page_content"]
+        try:
+            quiz = self.orchestrator.llm_service.generate_quiz(full_text)
+            if not quiz:
+                return [], "AI failed to generate quiz questions from the content."
+            return quiz, None
+        except Exception as e:
+            return [], f"LLM Error: {str(e)}"
 
-    def get_source_briefing(self, target_file: str) -> Dict:
+    def get_source_briefing(self, target_file: str) -> tuple[Dict, Optional[str]]:
         """
         - Logic: Fetches all sections, concatenates them, and generates a global briefing.
+        - Returns: (Briefing Dict, Error Message)
         """
         section_records = self.vector_db.get_section_exact(target_file, "")
-        if section_records:
-            section_records.sort(key=lambda x: x["metadata"].get("seq_id", 0))
-            full_content = "\n\n".join([r["page_content"] for r in section_records])
-            return self.orchestrator.llm_service.generate_source_briefing(target_file, full_content)
-        return {}
+        if not section_records:
+            return {}, "No content found for this file."
+            
+        section_records.sort(key=lambda x: x["metadata"].get("seq_id", 0))
+        full_content = "\n\n".join([r["page_content"] for r in section_records])
+        try:
+            briefing = self.orchestrator.llm_service.generate_source_briefing(target_file, full_content)
+            if not briefing:
+                return {}, "AI failed to generate a briefing."
+            return briefing, None
+        except Exception as e:
+            return {}, f"LLM Error: {str(e)}"
