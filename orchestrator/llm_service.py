@@ -80,17 +80,17 @@ class LLMService(ILLMService):
         if match:
             return match.group(1)
 
-        # Prioritize Arrays [] for lists like Quizzes
-        start_idx_arr = text.find('[')
-        end_idx_arr = text.rfind(']')
-        if start_idx_arr != -1 and end_idx_arr != -1 and end_idx_arr > start_idx_arr:
-            return text[start_idx_arr:end_idx_arr + 1]
-
-        # Then fallback to Objects {}
+        # Prioritize Objects {} (since all our current LLM tasks return objects)
         start_idx = text.find('{')
         end_idx = text.rfind('}')
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             return text[start_idx:end_idx + 1]
+
+        # Then fallback to Arrays []
+        start_idx_arr = text.find('[')
+        end_idx_arr = text.rfind(']')
+        if start_idx_arr != -1 and end_idx_arr != -1 and end_idx_arr > start_idx_arr:
+            return text[start_idx_arr:end_idx_arr + 1]
 
         return text
 
