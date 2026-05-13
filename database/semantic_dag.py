@@ -102,6 +102,16 @@ class Neo4jManager(IGraphStore):
         with self.driver.session() as session:
             session.run(query, user_id=user_id, concept_id=concept_id)
 
+    def reset_user_data(self, user_id: str = "guest_01"):
+
+        query_turns = "MATCH (u:User {id: $user_id})-[r:HAS_TURN]->(t:ChatTurn) DETACH DELETE t"
+        query_learned = "MATCH (u:User {id: $user_id})-[r:HAS_LEARNED]->(c:Concept) DELETE r"
+        
+        with self.driver.session() as session:
+            session.run(query_turns, user_id=user_id)
+            session.run(query_learned, user_id=user_id)
+            print(f"[Neo4j] Removed all about: {user_id}")
+
     def get_unlearned_prerequisites(self, target_concept: str, max_depth: int = 2, user_id: str = "guest_01") -> List[
         str]:
         query = f"""

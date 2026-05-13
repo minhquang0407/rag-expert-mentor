@@ -108,6 +108,23 @@ with st.sidebar:
                 st.warning(f"⚠️ Ingestion LLM (JSON Mode) failed: {e}. I will try to auto-fix this if you proceed.")
 
     st.markdown("---")
+    st.header("⚙️ User Settings")
+    if st.button("Reset Learning Progress", use_container_width=True, type="secondary"):
+        with st.spinner("Deleting history..."):
+            engine.reset_all_user_data(st.session_state.user_id)
+            # Clear relevant session states
+            st.session_state.messages = []
+            st.session_state.current_seq_idx = 0
+            # Also clear any cached quizzes or briefings
+            keys_to_delete = [k for k in st.session_state.keys() if k.startswith("quiz_") or k.startswith("briefing_")]
+            for k in keys_to_delete:
+                del st.session_state[k]
+            
+            st.success("✅ Progress reset successfully!")
+            time.sleep(1)
+            st.rerun()
+
+    st.markdown("---")
     st.header("Ingest Learning Data")
     uploaded_file = st.file_uploader("Upload document (.md)", type=["md"])
 

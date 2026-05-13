@@ -353,4 +353,9 @@ class RuntimeEngine:
                 return {}, err
             return briefing, None
         except Exception as e:
-            return {}, f"LLM Error: {str(e)}"
+            return {}, f"Engine Error: {str(e)}"
+
+    def reset_all_user_data(self, user_id: str = "guest_01"):
+        self.vector_db.delete_user_history(user_id)
+        self.graph_db.reset_user_data(user_id)
+

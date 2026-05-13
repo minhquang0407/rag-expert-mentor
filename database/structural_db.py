@@ -313,6 +313,22 @@ class QdrantVectorStore(IVectorStore):
 
         return [r.payload for r in results if hasattr(r, 'payload') and r.payload]
 
+    def delete_user_history(self, user_id: str = "guest_01") -> None:
+
+        delete_filter = models.Filter(
+            must=[
+                models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))
+            ]
+        )
+        try:
+            self.client.delete(
+                collection_name=self.memory_coll,
+                points_selector=models.FilterSelector(filter=delete_filter)
+            )
+            print(f"[Qdrant] Removed episodic memory about: {user_id}")
+        except Exception as e:
+            print(f"[Qdrant] Error when removing history of {user_id}: {e}")
+
     def get_section_questions(self, parent_id: str) -> List[str]:
         """
         - Function: Retrieves all pre-generated questions for a specific section.
