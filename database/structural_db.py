@@ -54,6 +54,17 @@ class QdrantVectorStore(IVectorStore):
                         # [FIXED]: Khai báo vectors_config dưới dạng dictionary để tạo Named Vector từ đầu
                         vectors_config={self.vector_name: VectorParams(size=384, distance=Distance.COSINE)},
                     )
+                
+                for field in ["source", "section", "type"]:
+                    try:
+                        self.client.create_payload_index(
+                            collection_name=coll,
+                            field_name=field,
+                            field_schema=models.PayloadSchemaType.KEYWORD
+                        )
+                    except Exception:
+                        pass # Index đã tồn tại hoặc đang được tạo
+
             except Exception as e:
                 # If "File exists" error occurs, it means the directory is there but Qdrant was confused.
                 # We log it and move on, as the existing directory will be used.
