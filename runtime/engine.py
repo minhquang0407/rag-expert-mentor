@@ -344,8 +344,8 @@ class RuntimeEngine:
         full_content = "\n\n".join([r["page_content"] for r in section_records])
         try:
             briefing, err = self.orchestrator.llm_service.generate_source_briefing(target_file, full_content)
-            if not briefing:
-                return {}, "AI failed to generate a briefing."
+            if err:
+                return {}, err
             return briefing, None
         except Exception as e:
             return {}, f"LLM Error: {str(e)}"

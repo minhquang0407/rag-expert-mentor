@@ -236,29 +236,38 @@ class LLMService(ILLMService):
         Content:
         {section_text}
         
-        Return ONLY a JSON list:
+        ### RULES:
+        1. Return ONLY a valid JSON list of objects.
+        2. NO double quotes (") inside the 'question', 'options', or 'explanation' fields. Use single quotes (') instead.
+        3. The answer_idx must be an integer (0-3).
+        
+        ### FORMAT:
         [
             {{
-                "question": "text",
-                "options": ["A", "B", "C", "D"],
+                "question": "Question text here...",
+                "options": ["Option 0", "Option 1", "Option 2", "Option 3"],
                 "answer_idx": 0,
-                "explanation": "text"
+                "explanation": "Brief explanation here..."
             }}
         ]
         """
         try:
             raw_response = self.llm.invoke(prompt)
-            content = raw_response.content
+            content = raw_response.content.strip()
             
+            # Use the robust helper to extract JSON
             clean_json_str = self._extract_json_from_text(content)
+            
+            # Simple cleanup for common LLM JSON mistakes
+            clean_json_str = clean_json_str.replace('\n', ' ').replace('\r', '')
             
             try:
                 quiz_data = json.loads(clean_json_str)
                 if isinstance(quiz_data, list) and len(quiz_data) > 0:
                     return quiz_data, None
-                return [], f"AI returned empty or invalid list format. Raw: {content[:100]}..."
-            except json.JSONDecodeError:
-                return [], f"JSON Parse Error. AI output was: {content[:200]}..."
+                return [], f"AI returned invalid list format. Snippet: {content[:100]}"
+            except json.JSONDecodeError as je:
+                return [], f"JSON Parse Error at char {je.pos}. Content start: {clean_json_str[:150]}"
         except Exception as e:
             return [], f"LLM Invocation Error: {str(e)}"
 
