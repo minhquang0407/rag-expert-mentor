@@ -366,8 +366,10 @@ def render_knowledge_graph(engine, user_id, chapter_name=None, file_name=None):
 st.title("AI Professor - Multi-System Expert")
 st.caption("Multi-Agent Queue Architecture with Local/Global QA Routing.")
 
-# Split into 3 main workspaces
-tab_learning, tab_map, tab_global_qa = st.tabs(["Learning Workspace", "Knowledge Map", "Global Q&A"])
+# Split into 4 main workspaces
+tab_learning, tab_briefing, tab_map, tab_global_qa = st.tabs([
+    "Learning Workspace", "Source Briefing", "Knowledge Map", "Global Q&A"
+])
 
 query_to_send = None
 action_mode_to_send = None
@@ -425,12 +427,8 @@ with tab_learning:
             if quiz_key not in st.session_state:
                 if st.button("✨ Generate AI Live Quiz", use_container_width=True):
                     with st.spinner("AI is reading the lesson and preparing questions..."):
-                        # 1. Fetch exact section text
-                        section_data = engine.vector_db.get_section_exact(st.session_state.target_file, st.session_state.target_section)
-                        if section_data:
-                            full_text = section_data[0]["page_content"]
-                            # 2. Call LLM to generate quiz (Use engine.llm_service directly)
-                            quiz = engine.llm_service.generate_quiz(full_text)
+                        quiz = engine.get_lesson_quiz(st.session_state.target_file, st.session_state.target_section)
+                        if quiz:
                             st.session_state[quiz_key] = quiz
                             st.rerun()
                         else:
@@ -485,7 +483,54 @@ with tab_learning:
         st.info("👈 Please select a lesson from the Sidebar to start the Learning Workspace.")
 
 # ==========================================
-# WORKSPACE 2: KNOWLEDGE MAP (GLOBAL)
+# WORKSPACE 2: SOURCE BRIEFING (NOTEBOOKLM STYLE)
+# ==========================================
+with tab_briefing:
+    if st.session_state.target_file:
+        st.markdown(f"## Source Briefing: {st.session_state.target_file}")
+        st.caption("AI-generated overview, themes, and deep-dive discussion transcript.")
+        
+        briefing_key = f"briefing_{st.session_state.target_file}"
+        
+        if briefing_key not in st.session_state:
+            if st.button("✨ Generate Source Briefing", use_container_width=True):
+                with st.spinner("Reading every page of your document to ensure 100% accuracy..."):
+                    briefing = engine.get_source_briefing(st.session_state.target_file)
+                    if briefing:
+                        st.session_state[briefing_key] = briefing
+                        st.rerun()
+                    else:
+                        st.error("No content found in database. Please ingest the document first.")
+        
+        if briefing_key in st.session_state:
+            b = st.session_state[briefing_key]
+            if b:
+                # 1. Synopsis
+                st.markdown("### 📝 Synopsis")
+                st.write(b.get("synopsis", "No synopsis available."))
+                
+                # 2. Key Themes
+                st.markdown("### 🔑 Key Themes")
+                themes = b.get("key_themes", [])
+                cols = st.columns(len(themes) if themes else 1)
+                for i, theme in enumerate(themes):
+                    cols[i % len(cols)].info(f"**{theme}**")
+                
+                # 3. Podcast Script
+                st.markdown("### AI Deep Dive (Podcast Script)")
+                with st.expander("Reveal Discussion Transcript"):
+                    st.markdown(b.get("podcast_script", "No script available."))
+                
+                if st.button("Regenerate Briefing"):
+                    del st.session_state[briefing_key]
+                    st.rerun()
+            else:
+                st.error("Failed to generate briefing. Please try again.")
+    else:
+        st.info("👈 Please select a subject in the Sidebar to unlock the Source Briefing.")
+
+# ==========================================
+# WORKSPACE 3: KNOWLEDGE MAP (GLOBAL)
 # ==========================================
 with tab_map:
     if st.session_state.target_file:

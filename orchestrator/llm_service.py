@@ -253,6 +253,37 @@ class LLMService(ILLMService):
             print(f"[!] LLM generate_quiz error: {e}")
             return []
 
+    def generate_source_briefing(self, file_name: str, full_text: str) -> Dict:
+        """
+        - Function: Generates a high-level briefing based on the ACTUAL FULL CONTENT.
+        """
+        prompt = f"""
+        You are an expert academic researcher. Based on the FULL CONTENT of the document '{file_name}' provided below, generate a comprehensive 'Source Briefing'.
+        Everything must be grounded in the text. Do NOT hallucinate.
+        
+        [FULL DOCUMENT CONTENT]:
+        {full_text[:100000]} # Limit to 100k chars for safety, but usually enough for a book
+        
+        Please provide:
+        1. A 'Synopsis': A high-level summary of what this document is about (3-4 paragraphs).
+        2. 'Key Themes': A list of the most important recurring themes or concepts.
+        3. 'AI Deep Dive' (Podcast Script): A short, engaging dialogue transcript between two experts (Host & Guest) discussing the core value of this document.
+        
+        Return the result ONLY as a JSON object:
+        {{
+            "synopsis": "...",
+            "key_themes": ["...", "..."],
+            "podcast_script": "..."
+        }}
+        """
+        try:
+            raw_response = self.llm.invoke(prompt)
+            clean_json_str = self._extract_json_from_text(raw_response.content)
+            return json.loads(clean_json_str)
+        except Exception as e:
+            print(f"[!] LLM generate_source_briefing error: {e}")
+            return {}
+
     def rerank_candidate_questions(self, user_query: str, candidates: List[Dict[str, str]]) -> List[str]:
         """
         - Reason: Rerank vector search results using LLM reasoning.
