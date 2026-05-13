@@ -223,6 +223,36 @@ class LLMService(ILLMService):
             print(f"[!] Question Generation Error: {e}")
             return []
 
+    def generate_quiz(self, section_text: str) -> List[Dict]:
+        """
+        - Function: Generates a list of multiple choice questions based on section content.
+        """
+        prompt = f"""
+        You are an expert examiner. Based on the following educational content, generate 3-5 high-quality multiple choice questions (MCQs).
+        Each question must test a key concept mentioned in the text.
+        
+        Content:
+        {section_text}
+        
+        Return the result ONLY as a JSON list of objects with this structure:
+        [
+            {{
+                "question": "The question text...",
+                "options": ["A", "B", "C", "D"],
+                "answer_idx": 0,
+                "explanation": "Why this is correct..."
+            }}
+        ]
+        """
+        try:
+            raw_response = self.llm.invoke(prompt)
+            content = raw_response.content
+            clean_json_str = self._extract_json_from_text(content)
+            return json.loads(clean_json_str)
+        except Exception as e:
+            print(f"[!] LLM generate_quiz error: {e}")
+            return []
+
     def rerank_candidate_questions(self, user_query: str, candidates: List[Dict[str, str]]) -> List[str]:
         """
         - Reason: Rerank vector search results using LLM reasoning.

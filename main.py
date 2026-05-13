@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import time
+import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -201,6 +202,17 @@ with st.sidebar:
         toc_path = tmp_toc_path if os.path.exists(tmp_toc_path) else local_toc_path
 
         if os.path.exists(toc_path):
+            # --- NEW: LEARNING PROGRESS DASHBOARD ---
+            progress_data = engine.graph_db.get_file_learning_progress(st.session_state.user_id, selected_file)
+            st.markdown("### 📊 Mastery Progress")
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.progress(progress_data["percent"] / 100)
+            with col2:
+                st.write(f"**{progress_data['percent']:.0f}%**")
+            st.caption(f"🏆 {progress_data['learned']} / {progress_data['total']} concepts mastered")
+            st.markdown("---")
+
             with open(toc_path, "r", encoding="utf-8") as f:
                 toc_tree = json.load(f)
 
@@ -320,8 +332,31 @@ def render_knowledge_graph(engine, user_id, chapter_name=None, file_name=None):
         config = Config(width=800, height=600, directed=True, physics=True, hierarchical=False)
         
         return_value = agraph(nodes=nodes, edges=edges, config=config)
+        
+        # --- NEW: INTERACTIVE NODE EXPLORER ---
         if return_value:
-            st.info(f"**Concept:** {return_value}")
+            # Find the node details from our graph_data
+            selected_node = next((n for n in graph_data["nodes"] if n["id"] == return_value), None)
+            
+            if selected_node:
+                with st.container(border=True):
+                    col_a, col_b = st.columns([4, 1])
+                    with col_a:
+                        st.markdown(f"### 💡 {selected_node['id']}")
+                        st.write(selected_node['title'] or "No description available.")
+                        st.caption(f"Type: {selected_node['type'].capitalize()}")
+                    
+                    with col_b:
+                        if not selected_node['learned']:
+                            if st.button("✅ Mark Learned", key=f"learn_{selected_node['id']}", use_container_width=True):
+                                engine.graph_db.mark_concept_as_learned(selected_node['id'], st.session_state.user_id)
+                                st.success(f"Mastered: {selected_node['id']}!")
+                                time.sleep(1)
+                                st.rerun()
+                        else:
+                            st.success("🌟 Learned")
+            else:
+                st.info(f"Concept: {return_value}")
     else:
         st.info("No graph data found for this view.")
 
@@ -344,8 +379,10 @@ with tab_learning:
     if st.session_state.target_section and st.session_state.entity_groups:
         st.subheader(f"{st.session_state.target_section}")
 
-        # Split into 3 sub-tabs within Learning
-        subtab_learn, subtab_local_qa, subtab_local_graph = st.tabs(["Lecture Progress", "Lesson Q&A", "Local Graph"])
+        # Split into 4 sub-tabs within Learning
+        subtab_learn, subtab_local_qa, subtab_assess, subtab_local_graph = st.tabs([
+            "Lecture Progress", "Lesson Q&A", "Self-Assessment", "Local Graph"
+        ])
 
         # --- SUB-TAB: LECTURE PROGRESS ---
         with subtab_learn:
@@ -376,6 +413,64 @@ with tab_learning:
             if local_q:
                 query_to_send = local_q
                 action_mode_to_send = "LOCAL_QA"
+
+        # --- SUB-TAB: SELF-ASSESSMENT ---
+        with subtab_assess:
+            st.markdown("### 🧠 AI Live Quiz")
+            st.caption("Generate a real-time interactive quiz based on this lesson's content.")
+            
+            # Use session state to store quiz to avoid regeneration on every click
+            quiz_key = f"quiz_{st.session_state.target_file}_{st.session_state.target_section}"
+            
+            if quiz_key not in st.session_state:
+                if st.button("✨ Generate AI Live Quiz", use_container_width=True):
+                    with st.spinner("AI is reading the lesson and preparing questions..."):
+                        # 1. Fetch exact section text
+                        section_data = engine.vector_db.get_section_exact(st.session_state.target_file, st.session_state.target_section)
+                        if section_data:
+                            full_text = section_data[0]["page_content"]
+                            # 2. Call LLM to generate quiz (Use engine.llm_service directly)
+                            quiz = engine.llm_service.generate_quiz(full_text)
+                            st.session_state[quiz_key] = quiz
+                            st.rerun()
+                        else:
+                            st.error("Could not find lesson content to generate quiz.")
+            
+            if quiz_key in st.session_state:
+                quiz = st.session_state[quiz_key]
+                if not quiz:
+                    st.warning("AI failed to generate a quiz. Please try again.")
+                    if st.button("Retry"):
+                        del st.session_state[quiz_key]
+                        st.rerun()
+                else:
+                    for i, q in enumerate(quiz):
+                        with st.container(border=True):
+                            st.markdown(f"**Question {i+1}:** {q['question']}")
+                            user_choice = st.radio(f"Select your answer:", q["options"], key=f"q_{quiz_key}_{i}", index=None)
+                            
+                            if user_choice is not None:
+                                # Check if correct
+                                choice_idx = q["options"].index(user_choice)
+                                if choice_idx == q["answer_idx"]:
+                                    st.success(f"✅ Correct! {q['explanation']}")
+                                else:
+                                    st.error(f"❌ Incorrect. The correct answer is: {q['options'][q['answer_idx']]}")
+                                    st.info(f"💡 **Explanation:** {q['explanation']}")
+                    
+                    if st.button("Reset Quiz", use_container_width=True):
+                        del st.session_state[quiz_key]
+                        st.rerun()
+            else:
+                # Show fallback to hypothetical questions if no quiz generated yet
+                st.markdown("---")
+                st.caption("Or view pre-generated study points:")
+                p_id = hashlib.md5(f"{st.session_state.target_file}__{st.session_state.target_chapter}__{st.session_state.target_section}".encode('utf-8')).hexdigest()
+                hy_questions = engine.vector_db.get_section_questions(p_id)
+                if hy_questions:
+                    for idx, hq in enumerate(hy_questions):
+                        with st.expander(f"Study Point {idx+1}"):
+                            st.write(hq)
 
         # --- SUB-TAB: LOCAL GRAPH ---
         with subtab_local_graph:

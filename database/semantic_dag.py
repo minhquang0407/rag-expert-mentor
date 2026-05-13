@@ -392,6 +392,36 @@ class Neo4jManager(IGraphStore):
             result = session.run(cypher, user_id=user_id)
             return [{"id": r["id"], "query": r["query"], "answer": r["answer"]} for r in result]
 
+    def get_file_learning_progress(self, user_id: str, file_name: str) -> Dict[str, Any]:
+        """
+        - Function: Calculates learning progress for a specific file.
+        - Returns: Dictionary with total_concepts, learned_concepts, and percentage.
+        """
+        prefix = f"{file_name}::"
+        query = """
+        MATCH (c:Concept)
+        WHERE any(loc IN c.source_locators WHERE loc STARTS WITH $prefix)
+        WITH count(c) as total
+        OPTIONAL MATCH (u:User {id: $user_id})-[h:HAS_LEARNED]->(c2:Concept)
+        WHERE any(loc IN c2.source_locators WHERE loc STARTS WITH $prefix)
+        WITH total, count(h) as learned
+        RETURN total, learned, 
+               CASE WHEN total > 0 THEN (toFloat(learned) / total) * 100 ELSE 0 END as percent
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, prefix=prefix, user_id=user_id).single()
+                if result:
+                    return {
+                        "total": result["total"],
+                        "learned": result["learned"],
+                        "percent": result["percent"]
+                    }
+                return {"total": 0, "learned": 0, "percent": 0}
+        except Exception as e:
+            print(f"[!] Neo4j get_file_learning_progress Error: {e}")
+            return {"total": 0, "learned": 0, "percent": 0}
+
     def save_chat_turn(self, user_id: str, turn_id: str, query: str, raw_answer: str, summary: str, concept_ids: list = None, target_file: str = "", target_section: str = ""):
         """
         - Lí do tại sao dùng: Lưu trữ Episodic Memory vào Neo4j làm Nguồn Sự Thật Duy Nhất (SSOT).

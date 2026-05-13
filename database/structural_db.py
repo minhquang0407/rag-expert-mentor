@@ -313,6 +313,27 @@ class QdrantVectorStore(IVectorStore):
 
         return [r.payload for r in results if hasattr(r, 'payload') and r.payload]
 
+    def get_section_questions(self, parent_id: str) -> List[str]:
+        """
+        - Function: Retrieves all pre-generated questions for a specific section.
+        """
+        query_filter = models.Filter(
+            must=[
+                models.FieldCondition(key="parent_id", match=models.MatchValue(value=parent_id))
+            ]
+        )
+        try:
+            records, _ = self.client.scroll(
+                collection_name=self.child_coll,
+                scroll_filter=query_filter,
+                limit=20,
+                with_payload=True
+            )
+            return [r.payload.get("page_content", "") for r in records if r.payload]
+        except Exception as e:
+            print(f"[!] Qdrant get_section_questions Error: {e}")
+            return []
+
     def delete_source(self, source_name: str) -> None:
         """
         - Function: Deletes all points associated with a specific source file across collections.
