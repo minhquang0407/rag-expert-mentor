@@ -223,24 +223,26 @@ class LLMService(ILLMService):
             print(f"[!] Question Generation Error: {e}")
             return []
 
-    def generate_quiz(self, section_text: str) -> List[Dict]:
+    def generate_quiz(self, section_text: str) -> tuple[List[Dict], Optional[str]]:
         """
         - Function: Generates a list of multiple choice questions based on section content.
         """
+        if not section_text or len(section_text.strip()) < 50:
+            return [], "Section text is too short to generate a meaningful quiz."
+
         prompt = f"""
-        You are an expert examiner. Based on the following educational content, generate 3-5 high-quality multiple choice questions (MCQs).
-        Each question must test a key concept mentioned in the text.
+        You are an expert examiner. Based on the following educational content, generate exactly 3 high-quality multiple choice questions (MCQs).
         
         Content:
         {section_text}
         
-        Return the result ONLY as a JSON list of objects with this structure:
+        Return ONLY a JSON list:
         [
             {{
-                "question": "The question text...",
+                "question": "text",
                 "options": ["A", "B", "C", "D"],
                 "answer_idx": 0,
-                "explanation": "Why this is correct..."
+                "explanation": "text"
             }}
         ]
         """
@@ -248,23 +250,19 @@ class LLMService(ILLMService):
             raw_response = self.llm.invoke(prompt)
             content = raw_response.content
             
-            # Use the robust helper to extract JSON
             clean_json_str = self._extract_json_from_text(content)
             
             try:
                 quiz_data = json.loads(clean_json_str)
-                # Validation: Ensure it's a list
-                if isinstance(quiz_data, list):
-                    return quiz_data
-                return []
+                if isinstance(quiz_data, list) and len(quiz_data) > 0:
+                    return quiz_data, None
+                return [], f"AI returned empty or invalid list format. Raw: {content[:100]}..."
             except json.JSONDecodeError:
-                print(f"[!] JSON Decode Error in generate_quiz. RAW CONTENT:\n{content}")
-                return []
+                return [], f"JSON Parse Error. AI output was: {content[:200]}..."
         except Exception as e:
-            print(f"[!] LLM generate_quiz error: {e}")
-            return []
+            return [], f"LLM Invocation Error: {str(e)}"
 
-    def generate_source_briefing(self, file_name: str, full_text: str) -> Dict:
+    def generate_source_briefing(self, file_name: str, full_text: str) -> tuple[Dict, Optional[str]]:
         """
         - Function: Generates a high-level briefing based on the ACTUAL FULL CONTENT.
         """
@@ -273,14 +271,9 @@ class LLMService(ILLMService):
         Everything must be grounded in the text. Do NOT hallucinate.
         
         [FULL DOCUMENT CONTENT]:
-        {full_text[:100000]} # Limit to 100k chars for safety, but usually enough for a book
+        {full_text[:100000]}
         
-        Please provide:
-        1. A 'Synopsis': A high-level summary of what this document is about (3-4 paragraphs).
-        2. 'Key Themes': A list of the most important recurring themes or concepts.
-        3. 'AI Deep Dive' (Podcast Script): A short, engaging dialogue transcript between two experts (Host & Guest) discussing the core value of this document.
-        
-        Return the result ONLY as a JSON object:
+        Return ONLY a JSON object:
         {{
             "synopsis": "...",
             "key_themes": ["...", "..."],
@@ -289,11 +282,16 @@ class LLMService(ILLMService):
         """
         try:
             raw_response = self.llm.invoke(prompt)
-            clean_json_str = self._extract_json_from_text(raw_response.content)
-            return json.loads(clean_json_str)
+            content = raw_response.content
+            clean_json_str = self._extract_json_from_text(content)
+            
+            try:
+                data = json.loads(clean_json_str)
+                return data, None
+            except json.JSONDecodeError:
+                return {}, f"Briefing JSON Error. AI output was: {content[:200]}..."
         except Exception as e:
-            print(f"[!] LLM generate_source_briefing error: {e}")
-            return {}
+            return {}, f"Briefing LLM Error: {str(e)}"
 
     def rerank_candidate_questions(self, user_query: str, candidates: List[Dict[str, str]]) -> List[str]:
         """
