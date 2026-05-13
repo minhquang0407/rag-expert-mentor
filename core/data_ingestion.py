@@ -10,12 +10,11 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
     processor = MathAwareDocumentProcessor()
     
     # 1. Khởi tạo khung trạng thái
-    with st.status("🚀 Đang xử lý dữ liệu học tập...", expanded=True) as status:
-        st.write("📂 Đang phân tích cấu trúc tài liệu (Markdown Headers)...")
+    with st.status("Processing learning data...", expanded=True) as status:
+        status.update(label="Analyzing document structure (Markdown Headers)...")
         final_document, toc_tree = processor.process_markdown(markdown_content)
 
-        st.write(f"📁 Đang lưu File mục lục: {file_name}_toc.json")
-        # Sử dụng /tmp để tránh lỗi Read-only trên Streamlit Cloud
+        status.update(label=f"Saving Table of Contents: {file_name}_toc.json")
         toc_dir = "/tmp/database/tocs"
         os.makedirs(toc_dir, exist_ok=True)
         toc_path = f"{toc_dir}/{file_name}_toc.json"
@@ -23,9 +22,8 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
             json.dump(toc_tree, f, ensure_ascii=False, indent=4)
 
         global_nodes_list = []
-        st.write(f"✨ Tìm thấy {len(final_document)} phân đoạn. Bắt đầu vòng lặp AI...")
+        status.update(label=f"Found {len(final_document)} sections. Starting AI processing loop...")
         
-        # Placeholder để làm sạch log cũ sau mỗi vòng lặp
         loop_placeholder = st.empty()
 
         for i, section in enumerate(final_document):
@@ -33,18 +31,13 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
             chapter_name = section.get("metadata", {}).get("Chapter", "Unknown")
             
             with loop_placeholder.container():
-                st.write(f"--- 🔄 **Bắt đầu xử lý phần {i+1}: {sec_name}** ---")
-            
+                st.write(f"--- **Processing Section {i+1}/{len(final_document)}: {sec_name}** ---")
+                
                 try:
                     full_section_text = section.get("page_content","")
                     parent_id = hashlib.md5(f"{file_name}__{chapter_name}__{sec_name}".encode('utf-8')).hexdigest()
 
-                    st.write(f"🤖 Đang gọi LLM trích xuất Kiến thức & Đồ thị cho: {sec_name}...")
-                    # -------------------------------------------------------
-                    # LOGIC GỐC: KHÔNG THAY ĐỔI
-                    # -------------------------------------------------------
                     llm_data = llm.extract_section_curriculum_and_dag(full_section_text, existing_nodes=global_nodes_list)
-                    st.write("✅ AI đã phản hồi dữ liệu.")
                 
                     main_entities = llm_data.get("main_entities", [])
                     teaching_roadmap = llm_data.get("teaching_roadmap", [])
@@ -66,7 +59,7 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
                         if "source" in e: section_anchors.add(e["source"])
                         if "target" in e: section_anchors.add(e["target"])
 
-                    st.write(f"🧬 Đang lưu {len(nodes)} Node và các quan hệ vào Neo4j...")
+                    st.write(f"🧬 Saving {len(nodes)} nodes and relations to Neo4j...")
                     if nodes or edges:
                         dag.save_knowledge_graph(
                             nodes=nodes, edges=edges,
@@ -75,7 +68,7 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
                         )
 
                     # UPSERT CURRICULUM INTO QDRANT
-                    st.write(f"📚 Đang lưu {len(teaching_roadmap)} bước giảng dạy vào Qdrant...")
+                    st.write(f"Saving {len(teaching_roadmap)} curriculum steps to Qdrant...")
                     for idx, step_data in enumerate(teaching_roadmap):
                         step_data["seq_id"] = idx
                         db.upsert_curriculum_group(
@@ -84,7 +77,7 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
                         )
 
                     # UPSERT PARENT SECTION & HYPOTHETICAL QUESTIONS
-                    st.write("❓ Đang tạo bộ câu hỏi kiểm tra giả định...")
+                    st.write("Generating hypothetical questions...")
                     questions = llm.generate_hypothetical_questions(full_section_text, num_questions=5)
 
                     parent_metadata = {
@@ -98,11 +91,11 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
                     db.upsert_section(full_section_text, parent_metadata, parent_id)
                     db.upsert_questions(questions, parent_id, file_name)
                     
-                    st.write(f"✔️ Hoàn tất lưu trữ phần: {sec_name}")
+                    st.write(f"Storage complete for: {sec_name}")
 
                 except Exception as inner_e:
-                    st.error(f"❌ Lỗi tại Phần {i+1} ({sec_name}): {str(inner_e)}")
+                    st.error(f"Error at Section {i+1} ({sec_name}): {str(inner_e)}")
                     st.exception(inner_e)
                     st.stop()
         
-        status.update(label="✨ Đã nạp dữ liệu thành công!", state="complete", expanded=False)
+        status.update(label="Data ingested successfully!", state="complete", expanded=False)
