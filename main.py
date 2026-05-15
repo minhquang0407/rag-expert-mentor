@@ -190,14 +190,8 @@ with st.sidebar:
                         engine.vector_db.delete_source(source_to_delete)
                         # 2. Delete from Neo4j
                         engine.graph_db.delete_source(source_to_delete)
-                        # Check both local and /tmp paths for TOC
-                        local_toc = os.path.join(current_dir, "database", "tocs", f"{source_to_delete}_toc.json")
-                        tmp_toc = os.path.join("/tmp/database/tocs", f"{source_to_delete}_toc.json")
-                        
-                        for path in [local_toc, tmp_toc]:
-                            if os.path.exists(path):
-                                os.remove(path)
-                                print(f"[*] Deleted TOC file: {path}")
+                        # 3. Delete persisted TOC metadata from Neo4j
+                        engine.graph_db.delete_table_of_contents(source_to_delete)
 
                         st.success(f"Successfully deleted all data for '{source_to_delete}'")
                         time.sleep(1)
@@ -215,13 +209,9 @@ with st.sidebar:
             st.session_state.target_file = selected_file
             st.session_state.target_section = ""
 
-        # Check both local and /tmp paths for TOC
-        local_toc_path = os.path.join(current_dir, "database", "tocs", f"{selected_file}_toc.json")
-        tmp_toc_path = os.path.join("/tmp/database/tocs", f"{selected_file}_toc.json")
-        
-        toc_path = tmp_toc_path if os.path.exists(tmp_toc_path) else local_toc_path
+        toc_tree = engine.graph_db.get_table_of_contents(selected_file)
 
-        if os.path.exists(toc_path):
+        if toc_tree:
             # --- NEW: LEARNING PROGRESS DASHBOARD ---
             progress_data = engine.graph_db.get_file_learning_progress(st.session_state.user_id, selected_file)
             st.markdown("### 📊 Mastery Progress")
@@ -232,9 +222,6 @@ with st.sidebar:
                 st.write(f"**{progress_data['percent']:.0f}%**")
             st.caption(f"🏆 {progress_data['learned']} / {progress_data['total']} concepts mastered")
             st.markdown("---")
-
-            with open(toc_path, "r", encoding="utf-8") as f:
-                toc_tree = json.load(f)
 
             if toc_tree:
                 st.markdown("### 🗂️ Table of Contents")

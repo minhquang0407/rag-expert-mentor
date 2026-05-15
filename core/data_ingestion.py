@@ -1,8 +1,5 @@
-import json
-import os
 import hashlib
 from database.document_processor import MathAwareDocumentProcessor
-import time
 
 import streamlit as st
 
@@ -14,12 +11,8 @@ def run_ingestion_pipeline(markdown_content: str, file_name: str, db, llm, dag):
         status.update(label="Analyzing document structure (Markdown Headers)...")
         final_document, toc_tree = processor.process_markdown(markdown_content)
 
-        status.update(label=f"Saving Table of Contents: {file_name}_toc.json")
-        toc_dir = "/tmp/database/tocs"
-        os.makedirs(toc_dir, exist_ok=True)
-        toc_path = f"{toc_dir}/{file_name}_toc.json"
-        with open(toc_path, "w", encoding="utf-8") as f:
-            json.dump(toc_tree, f, ensure_ascii=False, indent=4)
+        status.update(label=f"Saving Table of Contents for: {file_name}")
+        dag.save_table_of_contents(file_name, toc_tree)
 
         global_nodes_list = []
         status.update(label=f"Found {len(final_document)} sections. Starting AI processing loop...")

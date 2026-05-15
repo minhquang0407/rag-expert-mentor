@@ -1,4 +1,5 @@
 import os
+import json
 from neo4j import GraphDatabase
 from typing import List, Dict, Any
 from core.interfaces import IGraphStore
@@ -67,6 +68,47 @@ class Neo4jManager(IGraphStore):
         with self.driver.session() as session:
             session.run(query, user_id=user_id)
             session.run(init_rel_query)
+
+    def save_table_of_contents(self, file_name: str, toc_tree: Dict[str, Any]):
+        """Persist a document table of contents in Neo4j so it survives app restarts."""
+        if not self._is_available():
+            print("[Neo4j] ⚠️ Cannot save TOC while graph database is offline.")
+            return
+        query = """
+        MERGE (d:Document {source: $file_name})
+        SET d.toc_json = $toc_json,
+            d.updated_at = timestamp()
+        """
+        with self.driver.session() as session:
+            session.run(query, file_name=file_name, toc_json=json.dumps(toc_tree, ensure_ascii=False))
+
+    def get_table_of_contents(self, file_name: str) -> Dict[str, Any]:
+        """Load a persisted document table of contents from Neo4j."""
+        if not self._is_available():
+            return {}
+        query = """
+        MATCH (d:Document {source: $file_name})
+        RETURN d.toc_json AS toc_json
+        """
+        with self.driver.session() as session:
+            record = session.run(query, file_name=file_name).single()
+            if not record or not record.get("toc_json"):
+                return {}
+            try:
+                return json.loads(record["toc_json"])
+            except json.JSONDecodeError:
+                return {}
+
+    def delete_table_of_contents(self, file_name: str):
+        """Delete persisted TOC metadata for one document."""
+        if not self._is_available():
+            return
+        query = """
+        MATCH (d:Document {source: $file_name})
+        DETACH DELETE d
+        """
+        with self.driver.session() as session:
+            session.run(query, file_name=file_name)
 
     def save_knowledge_graph(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], file_name: str, chapter_name: str, section_title: str,
                             main_entities: List[str]):
