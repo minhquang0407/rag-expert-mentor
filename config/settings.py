@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     planner_can_add_agents: bool = Field(default=True)
     planner_can_remove_required_agents: bool = Field(default=False)
     history_restore_limit: int = Field(default=50)
+    tools_enabled: bool = Field(default=False)
+    python_tools_enabled: bool = Field(default=False)
+    max_tool_runtime_seconds: int = Field(default=5)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

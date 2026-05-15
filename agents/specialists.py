@@ -7,7 +7,7 @@ class SpecialistAgent(BaseAgent):
 
     teaching_style: str = "Explain clearly and accurately."
 
-    def run(self, task: AgentTask, blackboard: BlackboardState):
+    def _build_prompts(self, task: AgentTask, blackboard: BlackboardState):
         system_prompt = (
             f"You are {self.name}, a {self.role}. "
             f"Goal: {self.goal}\n"
@@ -36,6 +36,20 @@ You are the {self.name} specialist. Only cover the part of the lesson that match
 [TOPIC ANCHOR]
 You must teach ONLY the current section/focus above. RECENT HISTORY is background for continuity only; if it mentions another topic, ignore it.
 
+[AVAILABLE TOOLS]
+Tool-call validation mode is enabled. For this test, request exactly one relevant tool call when the current topic contains any matrix, graph, function, curve, algorithm, runtime, complexity, or benchmark concept.
+Use exactly this XML wrapper at the end of your response:
+<tool_call>
+{{"tool_name": "plot_matrix_heatmap", "arguments": {{"matrix": [[2,0],[0,1]], "title": "Example Matrix"}}}}
+</tool_call>
+Do not invent artifact paths. The runtime will create artifacts. Only request tools that fit your role.
+Allowed tools by role:
+- concept/example: plot_graph or plot_matrix_heatmap
+- formula: plot_matrix_heatmap
+- math: plot_function or plot_matrix_heatmap
+- algorithm: run_algorithm_benchmark
+For degree matrix topics, prefer plot_matrix_heatmap with a small 3x3 diagonal degree matrix. For graph intuition, prefer plot_graph with 3-5 nodes. For algorithm topics, prefer run_algorithm_benchmark with algorithm='degree_count'.
+
 [LESSON GOAL]
 {blackboard.lesson_goal or task.instruction}
 
@@ -57,7 +71,11 @@ You must teach ONLY the current section/focus above. RECENT HISTORY is backgroun
 [AGENT TASK]
 {task.instruction}
 """
+        return system_prompt, human_prompt
+
+    def run(self, task: AgentTask, blackboard: BlackboardState):
         try:
+            system_prompt, human_prompt = self._build_prompts(task, blackboard)
             content = self._llm_invoke_text(system_prompt, human_prompt)
             return self._build_result(task, content, confidence=0.75)
         except Exception as exc:
@@ -67,6 +85,19 @@ You must teach ONLY the current section/focus above. RECENT HISTORY is backgroun
                 success=False,
                 error=str(exc),
             )
+
+    def stream_run(self, task: AgentTask, blackboard: BlackboardState):
+        try:
+            system_prompt, human_prompt = self._build_prompts(task, blackboard)
+            chunks = []
+            for chunk in self._llm_stream_text(system_prompt, human_prompt):
+                chunks.append(chunk)
+                yield chunk
+            return "".join(chunks)
+        except Exception as exc:
+            error_text = f"Agent {self.name} failed: {exc}"
+            yield error_text
+            return error_text
 
 
 class ConceptAgent(SpecialistAgent):

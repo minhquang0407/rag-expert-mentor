@@ -1,12 +1,12 @@
 import streamlit as st
-import os
+import re
 import json
 import uuid
 import time
 import hashlib
 from pathlib import Path
 from dotenv import load_dotenv
-
+import os
 load_dotenv()
 # Get the absolute path of the directory containing this file
 current_dir = Path(__file__).parent.resolve()
@@ -42,6 +42,43 @@ def init_system():
 
 engine = init_system()
 
+
+def _flatten_tool_artifacts(tool_results):
+    artifacts = []
+    for result in tool_results or []:
+        artifacts.extend(result.get("artifacts", []))
+    return artifacts
+
+
+def render_lesson_with_tools(markdown_text: str, tool_results):
+    """Render final lesson markdown and replace <<tool:N>> placeholders inline."""
+    artifacts = _flatten_tool_artifacts(tool_results)
+    parts = re.split(r"(<<tool:\d+>>)", markdown_text or "")
+    for part in parts:
+        match = re.fullmatch(r"<<tool:(\d+)>>", part.strip())
+        if not match:
+            if part:
+                st.markdown(part)
+            continue
+
+        idx = int(match.group(1))
+        if idx >= len(artifacts):
+            st.warning(f"Missing tool artifact for placeholder {part}")
+            continue
+
+        artifact = artifacts[idx]
+        path = artifact.get("path")
+        title = artifact.get("title", "Tool artifact")
+        artifact_type = artifact.get("artifact_type")
+        if artifact_type == "image" and path:
+            st.image(path, caption=title)
+        elif artifact_type == "json":
+            st.json(artifact.get("metadata", {}))
+        elif path:
+            st.markdown(f"[{title}]({path})")
+        else:
+            st.caption(title)
+
 # ==========================================
 # 2. STATE MANAGEMENT (UI STATE)
 # ==========================================
@@ -69,6 +106,8 @@ if "agent_trace" not in st.session_state:
     st.session_state.agent_trace = []
 if "runtime_trace" not in st.session_state:
     st.session_state.runtime_trace = {}
+if "tool_results" not in st.session_state:
+    st.session_state.tool_results = []
 
 # ==========================================
 # 3. SIDEBAR - NAVIGATION & DATA INGESTION
@@ -255,6 +294,7 @@ with st.sidebar:
                                 st.session_state.messages = [m for m in st.session_state.messages if m.get("mode") == "GLOBAL_QA"]
                                 st.session_state.agent_trace = []
                                 st.session_state.runtime_trace = {}
+                                st.session_state.tool_results = []
                                 for key in list(st.session_state.keys()):
                                     if key.startswith("quiz_") or key.startswith("answers_quiz_") or key.startswith("grade_quiz_"):
                                         del st.session_state[key]
@@ -462,6 +502,7 @@ with tab_learning:
                         "workflow_mode": trace.get("workflow_mode"),
                         "success": trace.get("success"),
                         "event_count": len(trace.get("events", [])),
+                        "tool_results": st.session_state.tool_results,
                         "blackboard_snapshot": trace.get("blackboard_snapshot", {}),
                     })
 
@@ -690,6 +731,8 @@ if query_to_send and action_mode_to_send:
             full_lecture_text = ""
             current_text = ""
             stream_container = None
+            stream_buffer = ""
+            is_first_stream_phase = True
             
             for event in generator:
                 event_type = event.get("type")
@@ -703,9 +746,21 @@ if query_to_send and action_mode_to_send:
                     st.markdown(f"### [{event['agent'].upper()}]")
                     stream_container = st.empty()
                     current_text = ""
+                    stream_buffer = ""
+                    is_first_stream_phase = True
 
                 elif event_type == "chunk":
-                    current_text += event["content"]
+                    chunk = event["content"]
+                    if is_first_stream_phase:
+                        stream_buffer += chunk
+                        if "\n" not in stream_buffer and len(stream_buffer) <= 15:
+                            continue
+                        chunk = re.sub(r'^\s*```[a-zA-Z]*\n?', '', stream_buffer)
+                        stream_buffer = ""
+                        is_first_stream_phase = False
+                    else:
+                        chunk = chunk.replace("```", "")
+                    current_text += chunk
                     if stream_container is not None:
                         stream_container.markdown(current_text + "▌")
 
@@ -735,7 +790,12 @@ if query_to_send and action_mode_to_send:
                     if final_content:
                         full_lecture_text = final_content
                         st.markdown("### Final Synthesized Lesson")
-                        st.markdown(final_content)
+                        render_lesson_with_tools(final_content, st.session_state.tool_results)
+
+                elif event_type == "tool_result":
+                    result = event.get("result", {})
+                    st.session_state.tool_results.append(result)
+                    status_box.write(f"🛠️ Tool `{result.get('tool_name', 'unknown')}`: {result.get('status', 'unknown')}")
 
                 elif event_type == "trace":
                     st.session_state.runtime_trace = event.get("trace", {})

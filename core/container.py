@@ -7,6 +7,7 @@ from orchestrator.llm_service import LLMService
 from runtime.engine import SupportAgent, RuntimeEngine
 from runtime.queue import QueueOrchestrator
 from runtime.agent_runtime import MultiAgentRuntime
+from runtime.tools import ToolRegistry
 
 
 class Container(containers.DeclarativeContainer):
@@ -88,6 +89,13 @@ class Container(containers.DeclarativeContainer):
         llm_service=llm_service
     )
 
+    tool_registry = providers.Singleton(
+        ToolRegistry,
+        enabled=config.tools_enabled,
+        python_enabled=config.python_tools_enabled,
+        max_runtime_seconds=config.max_tool_runtime_seconds,
+    )
+
     multi_agent_runtime = providers.Singleton(
         MultiAgentRuntime,
         llm_service=llm_service,
@@ -96,6 +104,7 @@ class Container(containers.DeclarativeContainer):
         critic_enabled=config.critic_enabled,
         max_revision_loops=config.max_revision_loops,
         stream_agent_outputs=config.stream_agent_outputs,
+        tool_registry=tool_registry,
     )
 
     # Main Engine

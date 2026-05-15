@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from agents import (
@@ -15,8 +16,10 @@ from agents import (
     QuizAgent,
     SupervisorAgent,
 )
-from core.schemas import AgentTask, BlackboardState, PlanStep, RuntimePlan
+from core.schemas import AgentTask, BlackboardState, PlanStep, RuntimePlan, ToolCall
 from runtime.protocols import agent_result_to_event, critic_report_to_event
+from runtime.tool_protocols import extract_tool_calls
+from runtime.tools import ToolRegistry
 from runtime.tracing import RuntimeTracer
 
 
@@ -33,6 +36,7 @@ class MultiAgentRuntime:
         max_revision_loops: int = 1,
         stream_agent_outputs: bool = True,
         tracer: Optional[RuntimeTracer] = None,
+        tool_registry: Optional[ToolRegistry] = None,
     ):
         self.llm_service = llm_service
         self.vector_db = vector_db
@@ -41,6 +45,7 @@ class MultiAgentRuntime:
         self.max_revision_loops = max_revision_loops
         self.stream_agent_outputs = stream_agent_outputs
         self.tracer = tracer or RuntimeTracer()
+        self.tool_registry = tool_registry or ToolRegistry()
         self.agents = agents or self._build_default_agents()
 
     def _build_default_agents(self) -> Dict[str, Any]:
@@ -188,13 +193,49 @@ class MultiAgentRuntime:
                 requires_critic=step.requires_critic,
                 metadata=step.metadata,
             )
-            result = self.agents[step.agent_name].run(task, blackboard)
-            blackboard.agent_messages.append(result.message)
+            agent = self.agents[step.agent_name]
+            if self.stream_agent_outputs and hasattr(agent, "stream_run"):
+                raw_chunks = []
+                stream = agent.stream_run(task, blackboard)
+                while True:
+                    try:
+                        chunk = next(stream)
+                        raw_chunks.append(chunk)
+                        yield {"type": "chunk", "content": chunk}
+                    except StopIteration as stop:
+                        raw_content = stop.value if stop.value is not None else "".join(raw_chunks)
+                        break
+                result = agent._build_result(task, raw_content, confidence=0.75)
+            else:
+                result = agent.run(task, blackboard)
 
-            if self.stream_agent_outputs:
-                yield {"type": "chunk", "content": result.message.content}
+            cleaned_content, tool_calls = extract_tool_calls(result.message.content, step.agent_name)
+            if not tool_calls:
+                tool_calls = self._fallback_tool_calls(step.agent_name, blackboard)
+            result.message.content = cleaned_content
+            blackboard.agent_messages.append(result.message)
+            blackboard.tool_calls.extend(tool_calls)
+
             yield {"type": "agent_end", "agent": step.agent_name}
             yield agent_result_to_event(result)
+
+            for tool_call in tool_calls[:1]:
+                tool_result = self.tool_registry.execute_tool(
+                    agent_name=tool_call.agent_name,
+                    tool_name=tool_call.tool_name,
+                    arguments=tool_call.arguments,
+                    run_id=self.tracer.current_trace.run_id if self.tracer.current_trace else "manual",
+                    call_id=tool_call.call_id,
+                )
+                blackboard.tool_results.append(tool_result)
+                self.tracer.record(
+                    "tool_result",
+                    agent_name=step.agent_name,
+                    message=tool_result.content,
+                    success=tool_result.status == "success",
+                    payload=tool_result.model_dump(),
+                )
+                yield {"type": "tool_result", "result": tool_result.model_dump()}
 
             if self.critic_enabled and step.requires_critic:
                 yield from self._run_critic(step.agent_name, blackboard)
@@ -284,6 +325,20 @@ class MultiAgentRuntime:
         result = self.agents["grader"].run(task, blackboard)
         return result.message.metadata
 
+    def _format_stream_chunk(self, previous_text: str, chunk: str) -> str:
+        """Preserve readability when providers stream wordpieces without spaces."""
+        if not previous_text or not chunk:
+            return chunk
+        prev = previous_text[-1]
+        first = chunk[0]
+        if prev.isspace() or first.isspace():
+            return chunk
+        if first in ".,;:!?)]}%" or prev in "([{/$#`\n":
+            return chunk
+        if prev.isalnum() and first.isalnum():
+            return " " + chunk
+        return chunk
+
     def _run_critic(self, reviewed_agent: str, blackboard: BlackboardState):
         critic_task = AgentTask(
             task_id=f"critic_review_{reviewed_agent}",
@@ -329,6 +384,55 @@ class MultiAgentRuntime:
         runtime_plan.steps = support_steps + runtime_plan.steps
         runtime_plan.rationale = "GraphAgent/MemoryAgent provide context before the planned specialist path. " + runtime_plan.rationale
         return runtime_plan
+
+    def _fallback_tool_calls(self, agent_name: str, blackboard: BlackboardState):
+        """Generate one safe validation tool call when the LLM does not emit one."""
+        import uuid
+        from core.schemas import ToolCall
+        if not getattr(self.tool_registry, "enabled", False):
+            return []
+
+        topic = " ".join([
+            blackboard.lesson_goal or "",
+            blackboard.target_section or "",
+            blackboard.micro_context or "",
+            blackboard.macro_context[:500] if blackboard.macro_context else "",
+        ]).lower()
+
+        if agent_name in {"formula", "concept", "math", "example"} and any(
+            term in topic for term in ["matrix", "ma trận", "degree", "bậc", "adjacency", "laplacian", "chuẩn hóa", "normalization"]
+        ):
+            return [ToolCall(
+                call_id=str(uuid.uuid4()),
+                agent_name=agent_name,
+                tool_name="plot_matrix_heatmap",
+                arguments={
+                    "matrix": [[2, 0, 0], [0, 1, 0], [0, 0, 3]],
+                    "title": "Degree Matrix D - Tool Validation",
+                },
+            )]
+
+        if agent_name in {"concept", "math", "example"} and any(term in topic for term in ["graph", "đồ thị", "node", "edge", "đỉnh", "cạnh"]):
+            return [ToolCall(
+                call_id=str(uuid.uuid4()),
+                agent_name=agent_name,
+                tool_name="plot_graph",
+                arguments={
+                    "nodes": ["A", "B", "C", "D"],
+                    "edges": [["A", "B"], ["B", "C"], ["B", "D"]],
+                    "title": "Graph Structure - Tool Validation",
+                },
+            )]
+
+        if agent_name == "algorithm" and any(term in topic for term in ["algorithm", "thuật toán", "complexity", "độ phức tạp", "runtime"]):
+            return [ToolCall(
+                call_id=str(uuid.uuid4()),
+                agent_name=agent_name,
+                tool_name="run_algorithm_benchmark",
+                arguments={"algorithm": "degree_count", "sizes": [10, 100, 1000]},
+            )]
+
+        return []
 
     def _get_runtime_plan(self, blackboard: BlackboardState, required_agents: list[str]) -> RuntimePlan:
         raw_plan = blackboard.artifacts.get("runtime_plan")
