@@ -13,18 +13,49 @@ class Neo4jManager(IGraphStore):
         self.uri = uri
         self.user = user
         self.password = password
-        try:
-            self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
-            self.driver.verify_connectivity()
-            self._initialize_user()
-        except Exception as e:
-            print(f"[Neo4j] ❌ Connection Error: {e}")
+        self.driver = None
+        self.is_connected = False
+
+        candidates = [
+            (uri, user, password, "configured"),
+            ("bolt://localhost:7687", "neo4j", "ExpertMentor2026", "local docker"),
+        ]
+
+        seen = set()
+        for candidate_uri, candidate_user, candidate_password, label in candidates:
+            key = (candidate_uri, candidate_user, candidate_password)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            try:
+                driver = GraphDatabase.driver(candidate_uri, auth=(candidate_user, candidate_password))
+                driver.verify_connectivity()
+                self.driver = driver
+                self.uri = candidate_uri
+                self.user = candidate_user
+                self.password = candidate_password
+                self.is_connected = True
+                print(f"[Neo4j] ✅ Connected using {label} endpoint: {candidate_uri}")
+                self._initialize_user()
+                return
+            except Exception as e:
+                print(f"[Neo4j] ⚠️ Could not connect using {label} endpoint ({candidate_uri}): {e}")
+
+        self.driver = None
+        self.is_connected = False
+        print("[Neo4j] ⚠️ Offline mode enabled. Graph features will return empty results until Neo4j is running.")
 
     def close(self):
         if self.driver:
             self.driver.close()
 
+    def _is_available(self) -> bool:
+        return self.driver is not None and self.is_connected
+
     def _initialize_user(self, user_id: str = "guest_01"):
+        if not self._is_available():
+            return
         query = "MERGE (u:User {id: $user_id}) RETURN u"
         # Register HAS_LEARNED relationship type to avoid "Relationship type does not exist" warnings
         init_rel_query = """

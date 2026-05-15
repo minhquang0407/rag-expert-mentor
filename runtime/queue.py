@@ -6,18 +6,18 @@ from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import QueueState
 
 # ==========================================
-# PURE QUEUE ORCHESTRATOR
+# LEGACY QUEUE ORCHESTRATOR
 # ==========================================
 class QueueOrchestrator:
     def __init__(self, llm_service):
         """
-        - Reason: Replaces LangGraph to manage agent execution flow with zero framework overhead.
-        - Function: Initializes the orchestrator with the local LLM service and an empty state.
-        - Usage: Instantiated when a user starts studying a specific section.
+        - Reason: Legacy fallback for the original sequential expert queue.
+        - Function: Manages the pre-MultiAgentRuntime teaching flow.
+        - Usage: Kept during migration so the app can fall back if the new runtime is disabled.
         - Parameters:
-            - llm_service (LocalLLMService): The instance to communicate with Qwen.
+            - llm_service: The service used to communicate with the configured LLM.
         - Returns: None.
-        - Alternatives: LangGraph StateGraph, standard Python state machines.
+        - Alternatives: MultiAgentRuntime, LangGraph StateGraph.
         """
         self.llm_service = llm_service
         self.state = None

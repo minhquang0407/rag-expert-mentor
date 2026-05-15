@@ -6,6 +6,7 @@ from orchestrator.llm_factory import LLMFactory
 from orchestrator.llm_service import LLMService
 from runtime.engine import SupportAgent, RuntimeEngine
 from runtime.queue import QueueOrchestrator
+from runtime.agent_runtime import MultiAgentRuntime
 
 
 class Container(containers.DeclarativeContainer):
@@ -87,11 +88,23 @@ class Container(containers.DeclarativeContainer):
         llm_service=llm_service
     )
 
+    multi_agent_runtime = providers.Singleton(
+        MultiAgentRuntime,
+        llm_service=llm_service,
+        vector_db=vector_db,
+        graph_db=graph_db,
+        critic_enabled=config.critic_enabled,
+        max_revision_loops=config.max_revision_loops,
+        stream_agent_outputs=config.stream_agent_outputs,
+    )
+
     # Main Engine
     runtime_engine = providers.Singleton(
         RuntimeEngine,
         orchestrator=queue_orchestrator,
         vector_db=vector_db,
         graph_db=graph_db,
-        support_agent=support_agent
+        support_agent=support_agent,
+        multi_agent_runtime=multi_agent_runtime,
+        use_multi_agent_runtime=config.use_multi_agent_runtime,
     )

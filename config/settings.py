@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     neo4j_user: str = Field(default="neo4j")
     neo4j_password: str = Field(default="ExpertMentor2026")
 
+    # Multi-Agent Runtime Configuration
+    use_multi_agent_runtime: bool = Field(default=False)
+    critic_enabled: bool = Field(default=False)
+    max_revision_loops: int = Field(default=1)
+    stream_agent_outputs: bool = Field(default=True)
+    planner_can_add_agents: bool = Field(default=True)
+    planner_can_remove_required_agents: bool = Field(default=False)
+    history_restore_limit: int = Field(default=50)
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()

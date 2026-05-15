@@ -1,4 +1,5 @@
 import os
+import shutil
 import uuid
 import time
 from typing import Dict, Any, List
@@ -42,6 +43,47 @@ class QdrantVectorStore(IVectorStore):
             self.client.set_model("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
         except Exception:
             pass
+
+    def _reset_fastembed_cache(self) -> None:
+        """Remove corrupted FastEmbed cache so the ONNX model can be downloaded again."""
+        cache_paths = [
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Temp", "fastembed_cache"),
+            os.path.join(os.environ.get("TEMP", ""), "fastembed_cache"),
+        ]
+        for cache_path in cache_paths:
+            if cache_path and os.path.exists(cache_path):
+                try:
+                    shutil.rmtree(cache_path, ignore_errors=True)
+                    print(f"[Qdrant] Cleared corrupted FastEmbed cache: {cache_path}")
+                except Exception as exc:
+                    print(f"[Qdrant] Could not clear FastEmbed cache {cache_path}: {exc}")
+
+    def _reinitialize_embed_model(self) -> None:
+        self.embed_model = FastEmbedEmbeddings(
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        )
+
+    def _embed_query_safe(self, text: str) -> List[float]:
+        try:
+            return self.embed_model.embed_query(text)
+        except Exception as exc:
+            if "NO_SUCHFILE" not in str(exc) and "File doesn't exist" not in str(exc):
+                raise
+            print(f"[Qdrant] FastEmbed model cache appears corrupted: {exc}")
+            self._reset_fastembed_cache()
+            self._reinitialize_embed_model()
+            return self.embed_model.embed_query(text)
+
+    def _embed_documents_safe(self, texts: List[str]) -> List[List[float]]:
+        try:
+            return list(self.embed_model.embed_documents(texts))
+        except Exception as exc:
+            if "NO_SUCHFILE" not in str(exc) and "File doesn't exist" not in str(exc):
+                raise
+            print(f"[Qdrant] FastEmbed model cache appears corrupted: {exc}")
+            self._reset_fastembed_cache()
+            self._reinitialize_embed_model()
+            return list(self.embed_model.embed_documents(texts))
 
         # Robust creation of collections
         for coll in [self.parent_coll, self.child_coll, self.memory_coll]:
@@ -91,7 +133,7 @@ class QdrantVectorStore(IVectorStore):
         - Parameters: text, metadata, parent_id.
         - Returns: None.
         """
-        vector = self.embed_model.embed_query(text)
+        vector = self._embed_query_safe(text)
         payload = metadata.copy()
         payload["parent_id"] = parent_id
         payload["type"] = "section_anchor"
@@ -111,7 +153,7 @@ class QdrantVectorStore(IVectorStore):
             return
 
         questions = [qa["question"] for qa in qa_pairs]
-        vectors = list(self.embed_model.embed_documents(questions))
+        vectors = self._embed_documents_safe(questions)
         points = []
 
         for idx, (qa, vec) in enumerate(zip(qa_pairs, vectors)):
@@ -143,7 +185,7 @@ class QdrantVectorStore(IVectorStore):
         # Prioritize content_focus from the new schema
         vector_text = group_data.get("content_focus", "Empty teaching step")
 
-        vector = self.embed_model.embed_query(vector_text)
+        vector = self._embed_query_safe(vector_text)
 
         # Use deterministic UUID based on parent section and sequence ID to enforce OVERWRITE.
         seq_id = group_data.get("seq_id", 0)
@@ -230,7 +272,7 @@ class QdrantVectorStore(IVectorStore):
             conditions.append(models.FieldCondition(key="source", match=models.MatchValue(value=target_file)))
 
         filter_query = models.Filter(must=conditions) if conditions else None
-        query_vector = self.embed_model.embed_query(query)
+        query_vector = self._embed_query_safe(query)
 
         response = self.client.query_points(
             collection_name=self.child_coll,
@@ -281,7 +323,7 @@ class QdrantVectorStore(IVectorStore):
 
     def upsert_user_memory(self, user_id: str, turn_id: str, query: str, answer: str, summary: str):
         # Embed the summary (or query + summary) for semantic matching
-        vector = self.embed_model.embed_query(summary)
+        vector = self._embed_query_safe(summary)
         payload = {
             "user_id": user_id,
             "turn_id": turn_id,
@@ -297,7 +339,7 @@ class QdrantVectorStore(IVectorStore):
         )
 
     def search_semantic_memory(self, user_id: str, query: str, limit: int = 5) -> List[Dict]:
-        query_vector = self.embed_model.embed_query(query)
+        query_vector = self._embed_query_safe(query)
         # MUST filter by user_id for multi-tenant isolation
         user_filter = models.Filter(must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))])
         

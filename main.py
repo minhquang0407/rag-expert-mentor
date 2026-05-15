@@ -65,6 +65,10 @@ if "current_seq_idx" not in st.session_state:
 if "user_id" not in st.session_state:
     st.session_state.user_id = st.query_params.get("user", "guest_01")
     st.session_state.current_loaded_section = None
+if "agent_trace" not in st.session_state:
+    st.session_state.agent_trace = []
+if "runtime_trace" not in st.session_state:
+    st.session_state.runtime_trace = {}
 
 # ==========================================
 # 3. SIDEBAR - NAVIGATION & DATA INGESTION
@@ -247,6 +251,13 @@ with st.sidebar:
                                 st.session_state.current_seq_idx = 0
                                 st.session_state.entity_groups = engine.vector_db.get_curriculum_groups(selected_file,
                                                                                                         sec)
+                                # Clear stale section-scoped UI/runtime state so a new section cannot reuse old lesson output.
+                                st.session_state.messages = [m for m in st.session_state.messages if m.get("mode") == "GLOBAL_QA"]
+                                st.session_state.agent_trace = []
+                                st.session_state.runtime_trace = {}
+                                for key in list(st.session_state.keys()):
+                                    if key.startswith("quiz_") or key.startswith("answers_quiz_") or key.startswith("grade_quiz_"):
+                                        del st.session_state[key]
                                 st.session_state.thread_id = f"session_{uuid.uuid4().hex[:8]}"
                                 st.rerun()
 
@@ -416,8 +427,43 @@ with tab_learning:
                 if st.button(btn_text, use_container_width=True):
                     query_to_send = "Please continue the lecture."
                     action_mode_to_send = "LEARNING"
+
+                if st.session_state.current_seq_idx > 0:
+                    if st.button("🔄 Regenerate previous lesson step", use_container_width=True, type="secondary"):
+                        # Step index is advanced after a lesson completes, so move back one step.
+                        st.session_state.current_seq_idx -= 1
+
+                        # Remove the latest rendered learning message from UI state so the regenerated
+                        # version replaces it visually after rerun.
+                        for idx in range(len(st.session_state.messages) - 1, -1, -1):
+                            if st.session_state.messages[idx].get("mode") == "LEARNING":
+                                del st.session_state.messages[idx]
+                                break
+
+                        query_to_send = "Please regenerate the previous lecture step."
+                        action_mode_to_send = "LEARNING"
             else:
-                st.success("You have completed this lesson! Please switch to another topic in the Sidebar.")
+                if st.button("🔄 Regenerate final lesson step", use_container_width=True, type="secondary"):
+                    st.session_state.current_seq_idx = max(len(st.session_state.entity_groups) - 1, 0)
+                    for idx in range(len(st.session_state.messages) - 1, -1, -1):
+                        if st.session_state.messages[idx].get("mode") == "LEARNING":
+                            del st.session_state.messages[idx]
+                            break
+                    query_to_send = "Please regenerate the final lecture step."
+                    action_mode_to_send = "LEARNING"
+                else:
+                    st.success("You have completed this lesson! Please switch to another topic in the Sidebar.")
+
+            if st.session_state.runtime_trace:
+                with st.expander("🧭 Agent Trace / Blackboard Inspector", expanded=False):
+                    trace = st.session_state.runtime_trace
+                    st.caption(f"Run ID: {trace.get('run_id', 'n/a')}")
+                    st.json({
+                        "workflow_mode": trace.get("workflow_mode"),
+                        "success": trace.get("success"),
+                        "event_count": len(trace.get("events", [])),
+                        "blackboard_snapshot": trace.get("blackboard_snapshot", {}),
+                    })
 
         # --- SUB-TAB: LOCAL QA ---
         with subtab_local_qa:
@@ -458,23 +504,70 @@ with tab_learning:
                         del st.session_state[quiz_key]
                         st.rerun()
                 else:
+                    answer_key = f"answers_{quiz_key}"
+                    result_key = f"grade_{quiz_key}"
+                    st.session_state.setdefault(answer_key, {})
+
                     for i, q in enumerate(quiz):
                         with st.container(border=True):
                             st.markdown(f"**Question {i+1}:** {q['question']}")
-                            user_choice = st.radio(f"Select your answer:", q["options"], key=f"q_{quiz_key}_{i}", index=None)
-                            
+                            user_choice = st.radio(
+                                "Select your answer:",
+                                q["options"],
+                                key=f"q_{quiz_key}_{i}",
+                                index=None,
+                            )
                             if user_choice is not None:
-                                # Check if correct
-                                choice_idx = q["options"].index(user_choice)
-                                if choice_idx == q["answer_idx"]:
-                                    st.success(f"✅ Correct! {q['explanation']}")
-                                else:
-                                    st.error(f"❌ Incorrect. The correct answer is: {q['options'][q['answer_idx']]}")
-                                    st.info(f"💡 **Explanation:** {q['explanation']}")
-                    
-                    if st.button("Reset Quiz", use_container_width=True):
-                        del st.session_state[quiz_key]
-                        st.rerun()
+                                st.session_state[answer_key][str(i)] = q["options"].index(user_choice)
+
+                    col_submit, col_reset = st.columns(2)
+                    with col_submit:
+                        if st.button("✅ Submit Quiz", use_container_width=True, type="primary"):
+                            if len(st.session_state[answer_key]) < len(quiz):
+                                st.warning("Please answer all questions before submitting.")
+                            else:
+                                st.session_state[result_key] = engine.grade_lesson_quiz(
+                                    quiz,
+                                    st.session_state[answer_key],
+                                    user_id=st.session_state.user_id,
+                                )
+                                st.rerun()
+                    with col_reset:
+                        if st.button("Reset Quiz", use_container_width=True):
+                            del st.session_state[quiz_key]
+                            st.session_state.pop(answer_key, None)
+                            st.session_state.pop(result_key, None)
+                            st.rerun()
+
+                    if result_key in st.session_state:
+                        result = st.session_state[result_key]
+                        grading = result.get("grading_result", {})
+                        remediation = result.get("remediation_plan", {})
+                        correct = grading.get("correct_count", 0)
+                        total = grading.get("total_count", len(quiz))
+                        score = grading.get("score", 0.0)
+
+                        st.markdown("---")
+                        st.markdown("### 📊 GraderAgent Feedback")
+                        st.metric("Score", f"{correct}/{total}", f"{score:.0%}")
+                        st.info(grading.get("feedback", "Quiz graded."))
+
+                        weak_concepts = remediation.get("weak_concepts", [])
+                        if grading.get("remediation_required") and weak_concepts:
+                            st.warning("Remediation recommended for: " + ", ".join(weak_concepts))
+                            st.markdown("**Recommended agents:** " + ", ".join(remediation.get("recommended_agents", [])))
+                            st.markdown(remediation.get("instruction", ""))
+                        else:
+                            st.success("Great work — no remediation required.")
+
+                        with st.expander("Review answer explanations"):
+                            for i, q in enumerate(quiz):
+                                submitted = st.session_state[answer_key].get(str(i))
+                                is_correct = submitted == q["answer_idx"]
+                                icon = "✅" if is_correct else "❌"
+                                st.markdown(f"{icon} **Question {i+1}:** {q['question']}")
+                                st.markdown(f"Correct answer: **{q['options'][q['answer_idx']]}**")
+                                st.caption(q.get("explanation", ""))
             else:
                 # Show fallback to hypothetical questions if no quiz generated yet
                 st.markdown("---")
@@ -599,23 +692,78 @@ if query_to_send and action_mode_to_send:
             stream_container = None
             
             for event in generator:
-                if event["type"] == "status":
+                event_type = event.get("type")
+
+                if event_type == "status":
                     status_box.write(f"✔️ {event['message']}")
                     status_box.update(label=event["message"])
-                elif event["type"] == "agent_start":
+
+                elif event_type == "agent_start":
+                    st.session_state.agent_trace.append({"event": "start", "agent": event["agent"]})
                     st.markdown(f"### [{event['agent'].upper()}]")
                     stream_container = st.empty()
                     current_text = ""
-                elif event["type"] == "chunk":
+
+                elif event_type == "chunk":
                     current_text += event["content"]
-                    stream_container.markdown(current_text + "▌")
-                elif event["type"] == "agent_end":
-                    stream_container.markdown(current_text)
+                    if stream_container is not None:
+                        stream_container.markdown(current_text + "▌")
+
+                elif event_type == "agent_end":
+                    st.session_state.agent_trace.append({"event": "end", "agent": event["agent"]})
+                    if stream_container is not None:
+                        stream_container.markdown(current_text)
                     full_lecture_text += f"### [{event['agent'].upper()}]\n{current_text}\n\n---\n\n"
+
+                elif event_type == "critic_report":
+                    status = event.get("status", "unknown")
+                    reviewed_agent = event.get("reviewed_agent", "unknown")
+                    issues = event.get("issues", [])
+                    st.session_state.agent_trace.append({
+                        "event": "critic_report",
+                        "agent": reviewed_agent,
+                        "status": status,
+                        "issues": issues,
+                    })
+                    if status == "pass":
+                        status_box.write(f"🛡️ Critic passed `{reviewed_agent}`.")
+                    else:
+                        status_box.write(f"⚠️ Critic flagged `{reviewed_agent}`: {issues}")
+
+                elif event_type == "final":
+                    final_content = event.get("content", "")
+                    if final_content:
+                        full_lecture_text = final_content
+                        st.markdown("### Final Synthesized Lesson")
+                        st.markdown(final_content)
+
+                elif event_type == "trace":
+                    st.session_state.runtime_trace = event.get("trace", {})
+
+                elif event_type == "agent_result":
+                    # AgentResult events are useful for tracing/debugging but should not be rendered as duplicate content.
+                    st.session_state.agent_trace.append({
+                        "event": "agent_result",
+                        "agent": event.get("agent"),
+                        "success": event.get("success"),
+                        "error": event.get("error"),
+                    })
             
             status_box.update(label="Lesson is completed!", state="complete", expanded=False)
             
             st.session_state.current_seq_idx += 1
+
+            if st.session_state.runtime_trace:
+                with st.expander("🧭 Agent Trace / Blackboard Inspector", expanded=False):
+                    trace = st.session_state.runtime_trace
+                    st.caption(f"Run ID: {trace.get('run_id', 'n/a')}")
+                    st.json({
+                        "workflow_mode": trace.get("workflow_mode"),
+                        "success": trace.get("success"),
+                        "event_count": len(trace.get("events", [])),
+                        "blackboard_snapshot": trace.get("blackboard_snapshot", {}),
+                    })
+
             st.session_state.messages.append({"role": "assistant", "content": full_lecture_text, "mode": "LEARNING"})
 
         # FLOW 2: QA

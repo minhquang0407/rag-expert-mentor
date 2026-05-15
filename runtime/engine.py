@@ -141,17 +141,19 @@ class SupportAgent:
             return {"action": "answer", "response": raw_text}
 
 class RuntimeEngine:
-    def __init__(self, orchestrator, vector_db, graph_db, support_agent):
+    def __init__(self, orchestrator, vector_db, graph_db, support_agent, multi_agent_runtime=None, use_multi_agent_runtime: bool = False):
         """
         - Reason: The Central Dispatcher (Air Traffic Controller) of the system.
         - Function: Routes actions to LEARNING or QA, manages memory, and handles DB retrievals.
         - Usage: Instantiated once at the application entry point (e.g., app.py).
-        - Parameters: Instances of QueueOrchestrator, QdrantVectorStore, Neo4jGraphStore, SupportAgent.
+        - Parameters: Runtime orchestrators, database stores, and support agents.
         """
         self.orchestrator = orchestrator
         self.vector_db = vector_db
         self.graph_db = graph_db
         self.support_agent = support_agent
+        self.multi_agent_runtime = multi_agent_runtime
+        self.use_multi_agent_runtime = use_multi_agent_runtime
 
     def save_learning_turn(self, user_id: str, target_file: str, target_section: str, step_data: dict, full_lecture_text: str):
         """
@@ -232,6 +234,27 @@ class RuntimeEngine:
         - Function: Executes the distinct logic flows for LEARNING, LOCAL_QA, and GLOBAL_QA.
         """
         if action_mode == "LEARNING":
+            if self.use_multi_agent_runtime and self.multi_agent_runtime is not None:
+                print("\n[ENGINE] Dispatching to MultiAgentRuntime (Streaming)...")
+                raw_context = self.vector_db.get_section_exact(target_file, target_section)
+                macro_context_str = ""
+                if raw_context and isinstance(raw_context, list):
+                    if isinstance(raw_context[0], dict):
+                        macro_context_str = raw_context[0].get("page_content", "")
+                    else:
+                        macro_context_str = str(raw_context[0])
+                elif isinstance(raw_context, str):
+                    macro_context_str = raw_context
+
+                return self.multi_agent_runtime.execute_learning(
+                    user_id=user_id,
+                    target_file=target_file,
+                    target_section=target_section,
+                    step_data=step_data or {},
+                    macro_context=macro_context_str,
+                    anchor_nodes=(step_data or {}).get("main_entities", [])
+                )
+
             print("\n[ENGINE] Dispatching to LEARNING Queue (Streaming)...")
             return self._stream_learning_action(target_file, target_section, step_data, user_id)
 
@@ -329,12 +352,71 @@ class RuntimeEngine:
             
         full_text = section_data[0]["page_content"]
         try:
+            if self.use_multi_agent_runtime and self.multi_agent_runtime is not None:
+                step_data = {
+                    "step_title": target_section,
+                    "content_focus": full_text[:2000],
+                    "main_entities": section_data[0].get("metadata", {}).get("anchor_nodes", []),
+                }
+                quiz_payload = self.multi_agent_runtime.generate_assessment(
+                    user_id="guest_01",
+                    target_file=target_file,
+                    target_section=target_section,
+                    step_data=step_data,
+                    macro_context=full_text,
+                    question_count=5,
+                )
+                if quiz_payload.get("error"):
+                    return [], quiz_payload["error"]
+                return quiz_payload.get("questions", []), None
+
             quiz, err = self.orchestrator.llm_service.generate_quiz(full_text)
             if err:
                 return [], err
             return quiz, None
         except Exception as e:
             return [], f"Engine Error: {str(e)}"
+
+    def grade_lesson_quiz(self, quiz: List[Dict], answers: Dict[str, int], user_id: str = "guest_01") -> Dict[str, Any]:
+        """Grade a generated quiz and return feedback plus remediation guidance."""
+        if self.use_multi_agent_runtime and self.multi_agent_runtime is not None:
+            quiz_payload = {
+                "quiz_id": str(uuid.uuid4()),
+                "title": "Lesson Assessment",
+                "questions": quiz,
+                "target_concepts": sorted({q.get("concept_id") for q in quiz if q.get("concept_id")}),
+            }
+            return self.multi_agent_runtime.grade_assessment(
+                quiz=quiz_payload,
+                answers=answers,
+                user_id=user_id,
+            )
+
+        total = len(quiz)
+        correct = 0
+        weak_concepts = []
+        for idx, question in enumerate(quiz):
+            submitted = answers.get(str(idx), answers.get(idx))
+            if submitted == question.get("answer_idx"):
+                correct += 1
+            else:
+                weak_concepts.append(question.get("concept_id") or f"Question {idx + 1}")
+        score = correct / total if total else 0.0
+        return {
+            "grading_result": {
+                "score": score,
+                "correct_count": correct,
+                "total_count": total,
+                "weak_concepts": sorted(set(weak_concepts)),
+                "feedback": f"Score: {correct}/{total}.",
+                "remediation_required": score < 0.75,
+            },
+            "remediation_plan": {
+                "weak_concepts": sorted(set(weak_concepts)),
+                "recommended_agents": ["concept", "example"] if weak_concepts else [],
+                "instruction": "Review weak concepts: " + ", ".join(sorted(set(weak_concepts))) if weak_concepts else "No remediation required.",
+            },
+        }
 
     def get_source_briefing(self, target_file: str) -> tuple[Dict, Optional[str]]:
         """
