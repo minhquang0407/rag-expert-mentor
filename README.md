@@ -5,6 +5,8 @@
 RAG Expert Mentor is an intelligent tutoring system that ingests Markdown textbooks, automatically builds a knowledge graph, and delivers personalized, step-by-step lectures through a team of specialized AI expert agents. It combines vector search (Qdrant), graph traversal (Neo4j), and a local LLM (Qwen 2.5 via Ollama) into a unified teaching platform with long-term memory.
 
 ---
+Demo: https://ai-expert-mentor.streamlit.app/
+---
 
 ## Table of Contents
 
