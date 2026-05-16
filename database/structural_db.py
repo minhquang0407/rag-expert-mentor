@@ -44,6 +44,43 @@ class QdrantVectorStore(IVectorStore):
         except Exception:
             pass
 
+        self._ensure_collections_and_indexes()
+
+    def _ensure_collections_and_indexes(self) -> None:
+        """Ensure Qdrant collections and payload indexes required by filters exist."""
+        collection_indexes = {
+            self.parent_coll: ["source", "section", "type", "parent_id"],
+            self.child_coll: ["source", "type", "parent_id"],
+            self.memory_coll: ["user_id", "type", "turn_id"],
+        }
+
+        for coll, fields in collection_indexes.items():
+            try:
+                if not self.client.collection_exists(coll):
+                    print(f"[*] Creating new collection: {coll}")
+                    self.client.create_collection(
+                        collection_name=coll,
+                        vectors_config={self.vector_name: VectorParams(size=384, distance=Distance.COSINE)},
+                    )
+
+                for field in fields:
+                    try:
+                        self.client.create_payload_index(
+                            collection_name=coll,
+                            field_name=field,
+                            field_schema=models.PayloadSchemaType.KEYWORD,
+                        )
+                    except Exception as exc:
+                        # Index already exists / is being built / older local Qdrant may be permissive.
+                        if "already exists" not in str(exc).lower():
+                            print(f"[Qdrant] Payload index notice for {coll}.{field}: {exc}")
+
+            except Exception as exc:
+                if "File exists" in str(exc):
+                    print(f"[!] Warning: Directory for {coll} already exists on disk. Skipping creation.")
+                else:
+                    print(f"[X] Critical error ensuring collection {coll}: {exc}")
+
     def _reset_fastembed_cache(self) -> None:
         """Remove corrupted FastEmbed cache so the ONNX model can be downloaded again."""
         cache_paths = [
@@ -84,46 +121,6 @@ class QdrantVectorStore(IVectorStore):
             self._reset_fastembed_cache()
             self._reinitialize_embed_model()
             return list(self.embed_model.embed_documents(texts))
-
-        # Robust creation of collections
-        for coll in [self.parent_coll, self.child_coll, self.memory_coll]:
-            try:
-                # Check if collection is already registered in Qdrant's state
-                if not self.client.collection_exists(coll):
-                    print(f"[*] Creating new collection: {coll}")
-                    self.client.create_collection(
-                        collection_name=coll,
-                        # [FIXED]: Declare vectors_config as a dictionary to create Named Vector from scratch
-                        vectors_config={self.vector_name: VectorParams(size=384, distance=Distance.COSINE)},
-                    )
-                
-                for field in ["source", "section", "type"]:
-                    try:
-                        self.client.create_payload_index(
-                            collection_name=coll,
-                            field_name=field,
-                            field_schema=models.PayloadSchemaType.KEYWORD
-                        )
-                    except Exception:
-                        pass # Index already exists or is being created
-
-            except Exception as e:
-                # If "File exists" error occurs, it means the directory is there but Qdrant was confused.
-                # We log it and move on, as the existing directory will be used.
-                if "File exists" in str(e):
-                    print(f"[!] Warning: Directory for {coll} already exists on disk. Skipping creation.")
-                else:
-                    print(f"[X] Critical error creating collection {coll}: {e}")
-
-                
-            try:
-                self.client.create_payload_index(
-                    collection_name=coll,
-                    field_name="source",
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                )
-            except Exception:
-                pass
 
     def upsert_section(self, text: str, metadata: dict, parent_id: str) -> None:
         """
