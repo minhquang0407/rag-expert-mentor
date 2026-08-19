@@ -1,4 +1,4 @@
-# AI PROFESSOR
+# You can learn everything
 
 **A Multi-Agent AI Professor powered by GraphRAG + Hybrid Memory**
 
